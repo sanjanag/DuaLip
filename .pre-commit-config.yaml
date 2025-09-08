@@ -1,0 +1,32 @@
+repos:
+  - repo: local
+    hooks:
+      - id: isort
+        name: isort (pyproject)
+        entry: isort
+        language: python
+        language_version: python3
+        types: [python]
+        additional_dependencies:
+          - isort==5.13.2
+
+      - id: black
+        name: black (pyproject)
+        entry: black
+        language: python
+        language_version: python3
+        types: [python]
+        additional_dependencies:
+          - black==24.8.0
+        args: ["--config", "pyproject.toml"]
+
+      - id: flake8
+        name: flake8 (reads pyproject.toml)
+        entry: flake8
+        language: python
+        language_version: python3
+        types: [python]
+        additional_dependencies:
+          - flake8==7.0.0
+          - flake8-pyproject==1.2.3
+
