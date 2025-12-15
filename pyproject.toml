@@ -11,6 +11,8 @@ license = { file = "LICENSE" }
 requires-python = ">=3.9"
 dependencies = [
   "scipy",
+  "torch",
+  "mlflow"
 ]
 
 [project.optional-dependencies]
