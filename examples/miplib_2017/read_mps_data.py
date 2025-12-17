@@ -7,6 +7,8 @@ cost vectors, and right-hand side values from MPS files.
 
 It parses standard MPS sections (ROWS, COLUMNS, RHS, BOUNDS, ENDATA),
 handles equality/inequality constraints, variable bounds, and supports .mps.gz files.
+
+DISCLAIMER: This module is not yet fully tested and may not work for all MPS files.
 """
 
 import gzip
