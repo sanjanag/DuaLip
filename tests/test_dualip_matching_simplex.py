@@ -9,8 +9,6 @@ from dualip.optimizers.agd import AcceleratedGradientDescent
 from dualip.projections.base import create_projection_map
 
 HOST_DEVICE = "cpu"
-NUM_COMPUTE_DEVICE = 2
-COMPUTE_DEVICES = [f"cuda:{i}" for i in range(NUM_COMPUTE_DEVICE)]
 
 
 def set_up_data_scala():
@@ -154,6 +152,9 @@ def test_simplex_solver_inequality_distributed():
     gamma = 1e-3
     a_expanded, c_expanded, b_vec = set_up_data_scala()
     J, I = a_expanded.shape
+    host_device = "cuda:0"
+    compute_device_num = 2
+    compute_devices = [f"cuda:{i}" for i in range(compute_device_num)]
 
     # Use the new convenience function for constant projection types
     projection_map = create_projection_map("simplex", {"z": 1}, I)
@@ -166,10 +167,10 @@ def test_simplex_solver_inequality_distributed():
         equality_mask=None,
     )
     f = MatchingSolverDualObjectiveFunctionDistributed(
-        matching_input_args=input_args, gamma=gamma, host_device=HOST_DEVICE, compute_devices=COMPUTE_DEVICES
+        matching_input_args=input_args, gamma=gamma, host_device=host_device, compute_devices=compute_devices
     )
 
-    initial_dual = 0.1 * torch.ones(5, device=HOST_DEVICE)
+    initial_dual = 0.1 * torch.ones(5, device=host_device)
 
     solver = AcceleratedGradientDescent(max_iter=30, gamma=gamma)
     solver_result = solver.maximize(f, initial_dual)
