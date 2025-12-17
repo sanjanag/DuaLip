@@ -1,5 +1,3 @@
-import getpass
-import os
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Set, Union
@@ -208,7 +206,7 @@ def log_objective_result(result: ObjectiveResult, step: Optional[int] = None) ->
 def is_mlflow_available() -> bool:
     """Check if MLflow is available and properly configured."""
     try:
-        import mlflow
+        import mlflow  # noqa
 
         return True
     except ImportError:

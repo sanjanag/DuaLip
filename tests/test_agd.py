@@ -54,9 +54,10 @@ def test_quadratic_1d_function():
     # Test with the default initial_step_size.
     solver_default = AcceleratedGradientDescent(max_iter=1, gamma=None)
     solver_default_result = solver_default.maximize(Quadratic1DObjective(), torch.tensor([0.0], device=HOST_DEVICE))
-    assert (
-        abs(solver_default_result.dual_val[0] - (initial_gradient * default_step_size)) < 1e-10
-    ), f"Test fails for default initialStepSize: expected {initial_gradient * default_step_size}, got {solver_default_result.dual_val[0]}"
+    assert abs(solver_default_result.dual_val[0] - (initial_gradient * default_step_size)) < 1e-10, (
+        f"Test fails for default initialStepSize: expected {initial_gradient * default_step_size}, "
+        f"got {solver_default_result.dual_val[0]}"
+    )
 
     # Test with a new initial_step_size.
     new_step_size = 0.1
@@ -64,9 +65,10 @@ def test_quadratic_1d_function():
     solver_new_step_size_result = solver_new_step_size.maximize(
         Quadratic1DObjective(), torch.tensor([0.0], device=HOST_DEVICE)
     )
-    assert (
-        abs(solver_new_step_size_result.dual_val[0] - (initial_gradient * new_step_size)) < 1e-10
-    ), f"Test fails for new initialStepSize: expected {initial_gradient * new_step_size}, got {solver_new_step_size_result.dual_val[0]}"
+    assert abs(solver_new_step_size_result.dual_val[0] - (initial_gradient * new_step_size)) < 1e-10, (
+        f"Test fails for new initialStepSize: expected {initial_gradient * new_step_size}, "
+        f"got {solver_new_step_size_result.dual_val[0]}"
+    )
 
     print(
         "Quadratic1DObjective test passed. Final solutions:",
