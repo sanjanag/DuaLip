@@ -95,7 +95,7 @@ def run_solver(
     if mlflow_config is None:
         mlflow_config = MLflowConfig(enabled=False)
 
-    with mlflow_run_context(mlflow_config) as run:
+    with mlflow_run_context(mlflow_config):
         # Log hyperparameters if MLflow is enabled
         if mlflow_config.enabled and mlflow_config.log_hyperparameters:
             hyperparams = {

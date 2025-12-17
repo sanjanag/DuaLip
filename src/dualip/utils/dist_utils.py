@@ -11,7 +11,7 @@ def global_to_local_projection_map(global_map: dict[str, ProjectionEntry], local
     Given a global projection_map and the list of global col indices for a split,
     return a local projection_map with local indices. Example:
     """
-    global2local = {g: l for l, g in enumerate(local_cols)}  # map from global idx to local idx
+    global2local = {g: loc for loc, g in enumerate(local_cols)}  # map from global idx to local idx
     local_map = defaultdict(ProjectionEntry)
 
     for proj_key, proj_item in global_map.items():

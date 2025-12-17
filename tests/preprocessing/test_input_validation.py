@@ -1,20 +1,34 @@
-import torch
 import pytest
+import torch
 
 from dualip.preprocessing.input_validation import (
-    run_all_checks,
-    check_no_zero_row_or_col,
-    check_nan_or_inf,
-    check_correct_csc_construction,
     InputValidationError,
+    check_correct_csc_construction,
+    check_nan_or_inf,
+    check_no_zero_row_or_col,
+    run_all_checks,
 )
-
 
 ccol_indices = [0, 2, 3, 5, 8, 10, 12, 15, 16]
 row_indices = [2, 3, 3, 1, 2, 0, 1, 2, 0, 2, 0, 3, 1, 2, 3, 2]
-values = [0.2617, 0.3848, 0.2617, 0.8047, 0.4121, 0.7383, 0.3555,
-        0.3418, 0.5469, 0.9570, 0.3555, 0.6523, 0.1738, 0.4121,
-        0.9375, 0.3008]
+values = [
+    0.2617,
+    0.3848,
+    0.2617,
+    0.8047,
+    0.4121,
+    0.7383,
+    0.3555,
+    0.3418,
+    0.5469,
+    0.9570,
+    0.3555,
+    0.6523,
+    0.1738,
+    0.4121,
+    0.9375,
+    0.3008,
+]
 
 
 input_tensor_csc = torch.sparse_csc_tensor(

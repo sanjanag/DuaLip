@@ -335,7 +335,7 @@ class MPSProcessor:
                     print(f"Row {row.name} Row type: {row.type}")
 
         if len(self.constraint_rows) != len(self.rhs_values):
-            print(f"Number of constraints is not equal to the number of RHS values")
+            print("Number of constraints is not equal to the number of RHS values")
         if len(self.constraint_rows) + 1 != row_count:
             print(f"Number of constraints: {len(self.constraint_rows)}, Number of objective rows: {row_count}")
             raise ValueError("Number of constraints is not equal to the number of objective rows")
@@ -565,7 +565,8 @@ class MPSProcessor:
                     var_bounds.append((col_bounds["fx"], col_bounds["fx"]))
                     num_fixed_vars += 1
                 else:
-                    # Using this as reference: https://www.ibm.com/docs/en/icos/22.1.0?topic=standard-records-in-mps-format
+                    # Using this as reference:
+                    # https://www.ibm.com/docs/en/icos/22.1.0?topic=standard-records-in-mps-format
                     l, u = col_bounds.get("l", None), col_bounds.get("u", None)
                     if l is not None and u is not None:
                         var_bounds.append((l, u))

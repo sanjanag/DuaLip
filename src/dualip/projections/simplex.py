@@ -1,4 +1,5 @@
 import torch
+
 from dualip.projections.base import ProjectionOperator, register
 
 
@@ -11,7 +12,9 @@ def _proj_via_bisection_search(
 ) -> torch.Tensor:
     """
     Implementation of a bisection search algorithm.
-    Goal: search for optimal nu (nu_star) given that we know w = max(x - nu_star*1, 0) (See https://see.stanford.edu/materials/lsocoee364b/hw4sol.pdf)
+    Goal: search for optimal nu (nu_star) given that we know
+    w = max(x - nu_star*1, 0)
+    (See https://see.stanford.edu/materials/lsocoee364b/hw4sol.pdf)
     Projects a batch of vectors onto the z-simplex using bisection search.
     Args:
         x (torch.Tensor): A tensor of shape (L, B) where L is the vector
@@ -191,7 +194,6 @@ def _duchi_proj(
 
     if not to_project_mask.any():
         return w
-
 
     to_project = x[:, to_project_mask]
     proj_cols_idx = to_project_mask.nonzero(as_tuple=True)[0]

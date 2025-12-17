@@ -93,8 +93,6 @@ def mlflow_run_context(config: MLflowConfig):
         _mlflow_state.set_active_run(None)
 
 
-
-
 def log_hyperparameters(params: Dict[str, Any], step: Optional[int] = None) -> None:
     """
     Log hyperparameters to MLflow with selective logging based on configuration.

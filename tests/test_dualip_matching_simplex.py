@@ -110,10 +110,10 @@ def test_simplex_solver_inequality():
     gamma = 1e-3
 
     a_expanded, c_expanded, b_vec = set_up_data_scala()
-    J, I = a_expanded.shape
+    J, num_items = a_expanded.shape
 
     # Use the new convenience function for constant projection types
-    projection_map = create_projection_map("simplex", {"z": 1}, I)
+    projection_map = create_projection_map("simplex", {"z": 1}, num_items)
 
     input_args = MatchingInputArgs(
         A=a_expanded,
@@ -151,13 +151,13 @@ def test_simplex_solver_inequality_distributed():
 
     gamma = 1e-3
     a_expanded, c_expanded, b_vec = set_up_data_scala()
-    J, I = a_expanded.shape
+    J, num_items = a_expanded.shape
     host_device = "cuda:0"
     compute_device_num = 2
     compute_devices = [f"cuda:{i}" for i in range(compute_device_num)]
 
     # Use the new convenience function for constant projection types
-    projection_map = create_projection_map("simplex", {"z": 1}, I)
+    projection_map = create_projection_map("simplex", {"z": 1}, num_items)
 
     input_args = MatchingInputArgs(
         A=a_expanded,

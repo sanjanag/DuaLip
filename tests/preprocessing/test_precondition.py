@@ -1,18 +1,30 @@
-import torch
 from pathlib import Path
+
 import pytest
+import torch
 
-from dualip.preprocessing.precondition import (
-    jacobi_precondition,
-    jacobi_invert_precondition,
-)
-
+from dualip.preprocessing.precondition import jacobi_invert_precondition, jacobi_precondition
 
 ccol_indices = [0, 2, 3, 5, 8, 10, 12, 15, 16]
 row_indices = [2, 3, 3, 1, 2, 0, 1, 2, 0, 2, 0, 3, 1, 2, 3, 2]
-values = [0.2617, 0.3848, 0.2617, 0.8047, 0.4121, 0.7383, 0.3555,
-        0.3418, 0.5469, 0.9570, 0.3555, 0.6523, 0.1738, 0.4121,
-        0.9375, 0.3008]
+values = [
+    0.2617,
+    0.3848,
+    0.2617,
+    0.8047,
+    0.4121,
+    0.7383,
+    0.3555,
+    0.3418,
+    0.5469,
+    0.9570,
+    0.3555,
+    0.6523,
+    0.1738,
+    0.4121,
+    0.9375,
+    0.3008,
+]
 
 
 A_test = torch.sparse_csc_tensor(
@@ -36,7 +48,7 @@ def test_precondition_saves_norms(norms_path):
     """Row norms are computed and persisted correctly."""
     jacobi_precondition(A_test.clone(), b_test.clone(), norms_save_path=norms_path)
 
-    norms_path = Path(norms_path)  
+    norms_path = Path(norms_path)
     assert norms_path.exists(), "Norm file was not created"
     saved = torch.load(norms_path)
     expected = A_test.to_dense().norm(2, 1)

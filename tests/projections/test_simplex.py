@@ -1,7 +1,7 @@
 import torch
+
 from dualip.projections.base import project
 from dualip.projections.simplex import _duchi_proj, _proj_via_bisection_search
-
 
 x = torch.tensor([[0.5, -0.1], [0.7, 2.0]], dtype=torch.float32)
 

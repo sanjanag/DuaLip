@@ -25,9 +25,6 @@ def test_miplib_general_convergence_criteria():
 
     equality_mask = torch.tensor([False, False, False])
 
-    l = torch.tensor([0.0, 1.0, 0.0, -2.0])
-    u = torch.tensor([3.0, 4.0, float("nan"), 2.0])
-
     projection_map = {
         "bound_1": ProjectionEntry("box", {"l": 0.0, "u": 3.0}, indices=[0]),
         "bound_2": ProjectionEntry("box", {"l": 1.0, "u": 4.0}, indices=[1]),
@@ -70,8 +67,6 @@ def test_miplib_general_convergence_criteria_II():
     b = torch.tensor([1.0, 3.0])
     equality_mask = torch.tensor([False, False])
 
-    l = torch.zeros(2)
-    u = torch.ones(2)
     projection_map = create_projection_map("box", {"l": 0.0, "u": 1.0}, 2, indices=[0, 1])
 
     input_args = MIPLIBInputArgs(
@@ -109,9 +104,6 @@ def test_miplib_general_convergence_criteria_III():
     b = torch.tensor([2.0, 1.0])
     equality_mask = None
 
-    l = torch.zeros(2)
-    u = torch.ones(2)
-
     projection_map = create_projection_map("box", {"l": 0.0, "u": 1.0}, 2, indices=[0, 1])
     input_args = MIPLIBInputArgs(
         A=A,
@@ -147,9 +139,6 @@ def test_miplib_convergence_with_one_sided_x_bound_I():
     A = torch.tensor([[4.0, 1.0], [1.0, 2.0]])
     b = torch.tensor([2.0, 1.0])
     equality_mask = None
-
-    l = torch.zeros(2)
-    u = torch.Tensor([float("nan"), float("nan")])
 
     projection_map = create_projection_map("cone", {"l": 0.0}, 2, indices=[0, 1])
     input_args = MIPLIBInputArgs(
@@ -188,9 +177,6 @@ def test_miplib_convergence_with_one_sided_x_bound_II():
     A = torch.tensor([[4.0, 1.0], [1.0, 2.0]])
     b = torch.tensor([2.0, 1.0])
     equality_mask = None
-
-    l = torch.tensor([float("nan"), float("nan")])
-    u = torch.ones(2)
 
     projection_map = create_projection_map("cone", {"u": 1.0}, 2, indices=[0, 1])
     input_args = MIPLIBInputArgs(

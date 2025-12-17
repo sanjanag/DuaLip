@@ -1,13 +1,16 @@
-from dualip.projections.base import ProjectionOperator, register
 import torch
+
+from dualip.projections.base import ProjectionOperator, register
+
 
 @register("box")
 class BoxProjection(ProjectionOperator):
     """
-    Projection onto a box [l, u] per-coordinate of x.
+    Projection onto a box [lower, upper] per-coordinate of x.
     """
+
     def __init__(self, l: float = 0.0, u: float = 1.0):
-        self.l, self.u = l, u
+        self.lower, self.upper = l, u
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
-        return x.clamp(min=self.l, max=self.u)
+        return x.clamp(min=self.lower, max=self.upper)

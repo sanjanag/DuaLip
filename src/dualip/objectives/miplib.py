@@ -44,7 +44,7 @@ class MIPLIB2017ObjectiveFunction(BaseObjective):
         self.b_vec = miplib_input_args.b_vec
         self.projection_map = miplib_input_args.projection_map
         self.equality_mask = miplib_input_args.equality_mask
-        self.l, self.u = self._construct_variable_lower_upper_bound()
+        self.lower, self.upper = self._construct_variable_lower_upper_bound()
         self.use_jacobi_precondition = use_jacobi_precondition
 
         if self.use_jacobi_precondition:
@@ -107,26 +107,32 @@ class MIPLIB2017ObjectiveFunction(BaseObjective):
         return result
 
     def _construct_variable_lower_upper_bound(self):
-        l = torch.full_like(self.c, float("nan"))
-        u = torch.full_like(self.c, float("nan"))
+        lower = torch.full_like(self.c, float("nan"))
+        upper = torch.full_like(self.c, float("nan"))
 
         for _, proj_item in self.projection_map.items():
             indices = torch.tensor(proj_item.indices, dtype=torch.long, device=self.c.device)
             if "l" in proj_item.proj_params:
-                l[indices] = proj_item.proj_params["l"]
+                lower[indices] = proj_item.proj_params["l"]
             if "u" in proj_item.proj_params:
-                u[indices] = proj_item.proj_params["u"]
-        return l, u
+                upper[indices] = proj_item.proj_params["u"]
+        return lower, upper
 
     def _clamp_x_bound_duals(self, x_bound_duals, l_mask_exists, u_mask_exists):
-        """
-        This function projects the dual variables corresponding to the primal variables bounds (l_i, u_i).
+        r"""
+        This function projects the dual variables corresponding to the primal
+        variables bounds (l_i, u_i).
         The projection is done according to the following rules:
-            1. If only the lower bound exists (l_i is not NaN, u_i is NaN), clamp the dual variable to be >= 0.
-            2. If only the upper bound exists (l_i is NaN, u_i is not NaN), clamp the dual variable to be <= 0.
-            3. If neither bound exists (both l_i and u_i are NaN), set the dual variable to 0.
-            4. If both bounds exist (neither l_i nor u_i are NaN), leave the dual variable unchanged.
-        See the dfinition of set \Lambda defined in the PLDP paper under Equation (1).
+            1. If only the lower bound exists (l_i is not NaN, u_i is NaN),
+               clamp the dual variable to be >= 0.
+            2. If only the upper bound exists (l_i is NaN, u_i is not NaN),
+               clamp the dual variable to be <= 0.
+            3. If neither bound exists (both l_i and u_i are NaN),
+               set the dual variable to 0.
+            4. If both bounds exist (neither l_i nor u_i are NaN),
+               leave the dual variable unchanged.
+        See the definition of set \Lambda defined in the PLDP paper under
+        Equation (1).
         """
         result = x_bound_duals.clone()
 
@@ -178,7 +184,7 @@ class MIPLIB2017ObjectiveFunction(BaseObjective):
 
         if x is None:
             # construct based on reduced cost (in the future we can call different primal recovery methods)
-            x = torch.where(r >= 0, self.l, self.u)
+            x = torch.where(r >= 0, self.lower, self.upper)
             if torch.isnan(x).any():
                 raise ValueError("Unbounded x.")
 
@@ -187,11 +193,11 @@ class MIPLIB2017ObjectiveFunction(BaseObjective):
         lambda_pos = torch.clamp(r, min=0.0)
 
         # Compute dual objective: d = -bλ + <λ-, u> + <λ+, l>
-        u_exists_mask = ~torch.isnan(self.u)
-        l_exists_mask = ~torch.isnan(self.l)
+        u_exists_mask = ~torch.isnan(self.upper)
+        l_exists_mask = ~torch.isnan(self.lower)
 
-        lambda_u = torch.dot(lambda_neg[u_exists_mask], self.u[u_exists_mask])
-        lambda_l = torch.dot(lambda_pos[l_exists_mask], self.l[l_exists_mask])
+        lambda_u = torch.dot(lambda_neg[u_exists_mask], self.upper[u_exists_mask])
+        lambda_l = torch.dot(lambda_pos[l_exists_mask], self.lower[l_exists_mask])
         d = -torch.dot(self.b_vec, dual_val) + lambda_u + lambda_l
 
         # Compute primal objective: p = cx

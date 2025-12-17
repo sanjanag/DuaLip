@@ -3,7 +3,7 @@
 all: checkstyle test
 
 install:
-	python3 -m pip install -e .[dev]
+	python3 -m pip install -e ".[dev]"
 	pre-commit install
 
 # Run tests (pytest picks config from [tool.pytest.ini_options] in pyproject.toml)

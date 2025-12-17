@@ -9,8 +9,8 @@ to compute dual objective values.
 from read_mps_data import MPSData, MPSDataDualip, read_mps_file
 
 from dualip.objectives.miplib import MIPLIBInputArgs
-from dualip.run_solver import run_solver
 from dualip.optimizers.agd import SolverResult
+from dualip.run_solver import run_solver
 from dualip.types import ComputeArgs, ObjectiveArgs, SolverArgs
 
 

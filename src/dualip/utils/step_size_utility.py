@@ -38,9 +38,7 @@ def estimate_lipschitz_constant(
     Estimate the Lipschitz constant using the ratio:
         L = norm(grad_two - grad_one) / norm(dual_two - dual_one)
     """
-    return norm_of_difference(grad_one, grad_two) / norm_of_difference(
-        dual_one, dual_two
-    )
+    return norm_of_difference(grad_one, grad_two) / norm_of_difference(dual_one, dual_two)
 
 
 def step_size_from_lipschitz_constants(
@@ -83,16 +81,10 @@ def calculate_step_size(
       3. Return the candidate step size as 1 / (maximum Lipschitz constant) clamped to the specified bounds.
          If the history is incomplete or invalid, return initial_step_size.
     """
-    update_dual_gradient_history(
-        dual_grad, dual_val, grad_history, dual_history, max_history_length
-    )
+    update_dual_gradient_history(dual_grad, dual_val, grad_history, dual_history, max_history_length)
 
     lipschitz_constants = []
     for i in range(len(grad_history) - 1):
-        L_est = estimate_lipschitz_constant(
-            grad_history[i], grad_history[i + 1], dual_history[i], dual_history[i + 1]
-        )
+        L_est = estimate_lipschitz_constant(grad_history[i], grad_history[i + 1], dual_history[i], dual_history[i + 1])
         lipschitz_constants.append(L_est)
-    return step_size_from_lipschitz_constants(
-        lipschitz_constants, max_history_length, initial_step_size, max_step_size
-    )
+    return step_size_from_lipschitz_constants(lipschitz_constants, max_history_length, initial_step_size, max_step_size)

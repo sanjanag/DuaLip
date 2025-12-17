@@ -227,7 +227,6 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
             dist.destroy_process_group()
         dist.init_process_group(backend="nccl")
         self.streams = {dev: torch.cuda.Stream(dev) for dev in self.compute_devices}
-        rank, world = dist.get_rank(), dist.get_world_size()
 
     def calculate(
         self,
