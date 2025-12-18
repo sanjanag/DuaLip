@@ -1,9 +1,11 @@
+import pytest
 import torch
 
 from dualip.projections.base import create_projection_map
 from dualip.utils.dist_utils import global_to_local_projection_map, split_tensors_to_devices
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_global_to_local_projection_map():
 
     devices = ["cuda:0", "cuda:1"]
@@ -45,6 +47,7 @@ def test_global_to_local_projection_map():
     assert pm[1]["simplex_eq_z_2"].indices == [0, 1, 2, 3, 4]
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_split_tensors_to_devices():
     # Test case 1: 2 devices with block size 5
     num_constraints = 5

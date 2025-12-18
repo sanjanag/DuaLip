@@ -1,3 +1,4 @@
+import pytest
 import torch
 
 from dualip.objectives.matching import (
@@ -145,6 +146,7 @@ def test_simplex_solver_inequality():
         )
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_simplex_solver_inequality_distributed():
 
     print("Running simplexInequality test")
