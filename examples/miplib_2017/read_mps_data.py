@@ -182,7 +182,7 @@ class MPSData:
             for bound, indices in bound_index_map.items():
                 projection_map[f"bound_{bound}"] = ProjectionEntry(
                     proj_type="box",
-                    proj_params={"l": bound[0], "u": bound[1]},
+                    proj_params={"lower": bound[0], "upper": bound[1]},
                     indices=indices,
                 )
             return projection_map

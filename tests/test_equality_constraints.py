@@ -35,7 +35,7 @@ def test_solver_with_equality_constraint():
 
     gamma = 1e-5
     equality_mask = torch.tensor([True], device=device)
-    projection_map = create_projection_map("box", {"u": 1}, num_indices=2, indices=[0])
+    projection_map = create_projection_map("box", {"upper": 1}, num_indices=2, indices=[0])
     initial_dual = torch.tensor([0.0], device=device)
 
     input_args = MIPLIBInputArgs(

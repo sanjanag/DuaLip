@@ -65,7 +65,10 @@ def main():
         objective_args=objective_args,
     )
     print(f"Dual objective value: {solver_result.dual_objective}")
-    return solver_result
+
+    # This is a very loose tolerance, used as a rough check that the solver is working.
+    assert abs(27 - solver_result.dual_objective) < 1, "Dual objective value is not correct"
+    print("Dual objective value test passed.")
 
 
 if __name__ == "__main__":

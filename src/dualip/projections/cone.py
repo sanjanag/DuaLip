@@ -12,11 +12,11 @@ class coneProjection(ProjectionOperator):
     If both are None, the projection is identity.
     """
 
-    def __init__(self, lower: float | None = None, u: float | None = None):
-        if lower is not None and u is not None:
-            raise ValueError("Only one of 'l' or 'u' should be specified, not both.")
+    def __init__(self, lower: float | None = None, upper: float | None = None):
+        if lower is not None and upper is not None:
+            raise ValueError("Only one of 'lower' or 'upper' should be specified, not both.")
 
-        self.lower, self.upper = lower, u
+        self.lower, self.upper = lower, upper
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         if self.lower is not None:

@@ -104,7 +104,7 @@ def test_miplib_general_convergence_criteria_III():
     b = torch.tensor([2.0, 1.0])
     equality_mask = None
 
-    projection_map = create_projection_map("box", {"l": 0.0, "u": 1.0}, 2, indices=[0, 1])
+    projection_map = create_projection_map("box", {"lower": 0.0, "upper": 1.0}, 2, indices=[0, 1])
     input_args = MIPLIBInputArgs(
         A=A,
         c=c,
@@ -140,7 +140,7 @@ def test_miplib_convergence_with_one_sided_x_bound_I():
     b = torch.tensor([2.0, 1.0])
     equality_mask = None
 
-    projection_map = create_projection_map("cone", {"l": 0.0}, 2, indices=[0, 1])
+    projection_map = create_projection_map("cone", {"lower": 0.0}, 2, indices=[0, 1])
     input_args = MIPLIBInputArgs(
         A=A,
         c=c,
@@ -178,7 +178,7 @@ def test_miplib_convergence_with_one_sided_x_bound_II():
     b = torch.tensor([2.0, 1.0])
     equality_mask = None
 
-    projection_map = create_projection_map("cone", {"u": 1.0}, 2, indices=[0, 1])
+    projection_map = create_projection_map("cone", {"upper": 1.0}, 2, indices=[0, 1])
     input_args = MIPLIBInputArgs(
         A=A,
         c=c,
