@@ -6,9 +6,9 @@ import torch
 
 @dataclass
 class SolverArgs:
-    max_iter: int
-    initial_step_size: float
-    gamma: float
+    max_iter: int = 10000
+    initial_step_size: float = 1e-5
+    gamma: float = 1e-3
     max_step_size: float = 0.1
     initial_dual_path: Optional[str] = None
     gamma_decay_type: Optional[Literal["step"]] = None
@@ -19,7 +19,7 @@ class SolverArgs:
 @dataclass
 class ComputeArgs:
     host_device: str
-    compute_device_num: Optional[int] = None
+    compute_device_num: int = 1
 
 
 @dataclass
@@ -33,12 +33,12 @@ class ObjectiveArgs:
 class ObjectiveResult:
     dual_gradient: torch.Tensor
     dual_objective: torch.Tensor
-    reg_penalty: torch.Tensor = None
-    primal_objective: torch.Tensor = None
-    primal_var: torch.Tensor = None
-    dual_val_times_grad: torch.Tensor = None
-    max_pos_slack: torch.Tensor = None
-    sum_pos_slack: torch.Tensor = None
+    reg_penalty: Optional[torch.Tensor] = None
+    primal_objective: Optional[torch.Tensor] = None
+    primal_var: Optional[torch.Tensor] = None
+    dual_val_times_grad: Optional[torch.Tensor] = None
+    max_pos_slack: Optional[torch.Tensor] = None
+    sum_pos_slack: Optional[torch.Tensor] = None
 
 
 @dataclass
