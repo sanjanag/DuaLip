@@ -97,6 +97,7 @@ class MIPLIB2017ObjectiveFunction(BaseObjective):
         reg_penalty = gamma / 2.0 * torch.norm(projected_sol) ** 2
 
         dual_obj = self.c @ projected_sol + reg_penalty + dual_val @ (self.A_csr @ projected_sol - self.b_vec)
+        primal_obj = self.c @ projected_sol
         result = ObjectiveResult(
             dual_gradient=dual_gradient,
             dual_objective=dual_obj,
@@ -104,6 +105,7 @@ class MIPLIB2017ObjectiveFunction(BaseObjective):
         )
         if save_primal:
             result.primal_var = projected_sol
+            result.primal_objective = primal_obj
         return result
 
     def _construct_variable_lower_upper_bound(self):
