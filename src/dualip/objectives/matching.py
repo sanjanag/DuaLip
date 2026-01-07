@@ -238,6 +238,10 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         save_primal: bool = False,
     ) -> ObjectiveResult:
         """Compute and reduce gradients/objectives across all GPUs."""
+
+        if save_primal:
+            raise ValueError("Saving primal is not supported for distributed objective functions")
+
         # reset buffers
         self.total_grad.zero_()
         self.total_dual_obj.zero_()
@@ -246,7 +250,6 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         if gamma is not None:
             self.gamma = gamma
 
-        primal_obj, primal_var = None, None
         # launch on each device
         for solver, dev in zip(self.objectives, self.compute_devices):
             with torch.cuda.stream(self.streams[dev]):
@@ -255,9 +258,6 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
                 self.total_grad += res.dual_gradient.to(self.host_device, non_blocking=True)
                 self.total_dual_obj += res.dual_objective.to(self.host_device)
                 self.total_reg += res.reg_penalty.to(self.host_device)
-                if save_primal:
-                    primal_obj = self.total_dual_obj.clone()
-                    primal_var = res.primal_var.to(self.host_device, non_blocking=True)
 
         torch.cuda.synchronize()
 
@@ -283,8 +283,5 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
             max_pos_slack=max_pos_slack,
             sum_pos_slack=sum_pos_slack,
         )
-        if save_primal:
-            obj_result.primal_objective = primal_obj
-            obj_result.primal_var = primal_var
 
         return obj_result
