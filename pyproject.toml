@@ -8,9 +8,10 @@ version = "5.0.0"
 description = "Extreme-scale linear programming with a first-order projected dual-ascent solver and a modular API for problem-specific components."
 readme = { file = "README.md", content-type = "text/markdown" }
 license = { file = "LICENSE" }
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
-  "scipy",
+  "torch>=2.6.0",
+  "mlflow"
 ]
 
 [project.optional-dependencies]
