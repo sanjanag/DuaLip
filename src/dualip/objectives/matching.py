@@ -63,9 +63,6 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
         self._thresholds = []
         self._bucket_ids = None
 
-        # Precompute c_rescaled = -c / gamma
-        self.c_rescaled = -1.0 / gamma * self.c
-
         # Build buckets
         self.buckets = {}
         for proj_key, proj_item in self.projection_map.items():
@@ -131,14 +128,15 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
         Returns:
             ObjectiveResult
         """
-        if gamma is not None:
-            self.gamma = gamma
 
         # -dual_val/gamma
-        scaled = -1.0 / self.gamma * dual_val
+        scaled = -1.0 / gamma * dual_val
 
         # intermediate = A * scaled
         left_multiply_sparse(scaled, self.A, output_tensor=self.intermediate)
+
+        # Precompute c_rescaled = -c / gamma
+        self.c_rescaled = -1.0 / gamma * self.c
 
         # intermediate += c_rescaled
         elementwise_csc(self.intermediate, self.c_rescaled, add, output_tensor=self.intermediate)
