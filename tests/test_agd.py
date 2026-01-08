@@ -1,17 +1,17 @@
 import torch
 
-from dualip.objectives.base import ObjectiveResult
+from dualip.objectives.base import BaseObjective, ObjectiveResult
 from dualip.optimizers.agd import AcceleratedGradientDescent
 
 HOST_DEVICE = "cpu"
 
 
-class Quadratic1DObjective:
+class Quadratic1DObjective(BaseObjective):
     def __init__(self):
         self.dual_dimensionality = 1
         self.equality_mask: bool = None
 
-    def calculate(self, dual_val: torch.tensor, save_primal=False):
+    def calculate(self, dual_val: torch.tensor, save_primal=False, **kwargs):
         """
         Implements the 1D quadratic objective:
           f(x) = -(x - 3.0)^2
@@ -25,13 +25,13 @@ class Quadratic1DObjective:
         return ObjectiveResult(dual_gradient=grad, dual_objective=obj, reg_penalty=None)
 
 
-class SimpleObjective:
+class SimpleObjective(BaseObjective):
     def __init__(self):
         # This dummy objective is 2-dimensional.
         self.dual_dimensionality = 2
         self.equality_mask: bool = None
 
-    def calculate(self, dual_val: torch.tensor, save_primal=False):
+    def calculate(self, dual_val: torch.tensor, save_primal=False, **kwargs):
         """
         Implements the 2D objective:
           f(x, y) = -(x - 3)^2 - (y + 5)^2

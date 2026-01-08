@@ -81,15 +81,10 @@ class AcceleratedGradientDescent:
 
         i = 1
         while i <= self.max_iter:
+            # Save primal variable at the last iteration
+            save_primal = self.save_primal if i == self.max_iter else False
 
-            gamma_params = {"gamma": self.gamma} if self.gamma is not None else {}
-
-            if i == self.max_iter and self.save_primal:
-                objective_result: ObjectiveResult = f.calculate(
-                    dual_val=x, **gamma_params, save_primal=self.save_primal
-                )
-            else:
-                objective_result: ObjectiveResult = f.calculate(dual_val=x, **gamma_params)
+            objective_result: ObjectiveResult = f.calculate(dual_val=x, gamma=self.gamma, save_primal=save_primal)
 
             dual_obj = objective_result.dual_objective.cpu().item()
             dual_obj_log.append(dual_obj)
