@@ -1,5 +1,6 @@
-import os
 import json
+import os
+
 import numpy as np
 import torch
 
@@ -37,6 +38,7 @@ _cached_base_numpy = None  # (ccol_indices, row_indices, a_values, c_values, b_v
 # Low-level synthetic generator (NO caching)
 # -------------------------------------------------------------------------
 
+
 def _generate_matching_numpy(
     num_sources: int,
     num_destinations: int,
@@ -66,12 +68,12 @@ def _generate_matching_numpy(
     n_destinations = num_destinations
 
     # --- hyperparameters for distributions (tweak as you like) -------------
-    mu_p, sigma_p = 0.0, 1.0      # destination breadth
-    mu_s, sigma_s = 0.0, 1.0      # destination scale for a_{ij}
-    mu_v, sigma_v = -4.0, 0.75    # destination base value
-    mu_u, sigma_u = 0.0, 0.5      # source affinity
-    sigma_eps = 0.5               # per-edge multiplicative noise in c_{ij}
-    c_max = 0.5                   # cap values
+    mu_p, sigma_p = 0.0, 1.0  # destination breadth
+    mu_s, sigma_s = 0.0, 1.0  # destination scale for a_{ij}
+    mu_v, sigma_v = -4.0, 0.75  # destination base value
+    mu_u, sigma_u = 0.0, 0.5  # source affinity
+    sigma_eps = 0.5  # per-edge multiplicative noise in c_{ij}
+    c_max = 0.5  # cap values
     # -----------------------------------------------------------------------
 
     # derive avg_degree_per_source from target sparsity (fraction nnz)
@@ -103,8 +105,8 @@ def _generate_matching_numpy(
     if total_edges == 0:
         raise ValueError("No edges generated; increase target_sparsity.")
 
-    source_ids = np.empty(total_edges, dtype=np.int64)      # column indices (sources)
-    dest_ids = np.empty(total_edges, dtype=np.int64)        # row indices (destinations)
+    source_ids = np.empty(total_edges, dtype=np.int64)  # column indices (sources)
+    dest_ids = np.empty(total_edges, dtype=np.int64)  # row indices (destinations)
     c_values = np.empty(total_edges, dtype=np.float64)
     a_values = np.empty(total_edges, dtype=np.float64)
 
@@ -126,10 +128,10 @@ def _generate_matching_numpy(
         # a_{ij} = s_j * c_{ij}
         a_ij = s[j] * c_ij
 
-        source_ids[offset:offset + k] = sources_j
-        dest_ids[offset:offset + k] = j
-        c_values[offset:offset + k] = c_ij
-        a_values[offset:offset + k] = a_ij
+        source_ids[offset : offset + k] = sources_j
+        dest_ids[offset : offset + k] = j
+        c_values[offset : offset + k] = c_ij
+        a_values[offset : offset + k] = a_ij
 
         offset += k
 
@@ -180,6 +182,7 @@ def _generate_matching_numpy(
 # -------------------------------------------------------------------------
 # Cache helpers (memmap + JSON metadata)
 # -------------------------------------------------------------------------
+
 
 def _array_path(fname: str) -> str:
     return os.path.join(_CACHE_DIR, fname)
@@ -324,6 +327,7 @@ def _save_cached_numpy(
 # Main API: generator + caching wrapper
 # -------------------------------------------------------------------------
 
+
 def generate_synthetic_matching_input_args(
     num_sources: int,
     num_destinations: int,
@@ -394,12 +398,8 @@ def generate_synthetic_matching_input_args(
     c_vals_t = -torch.from_numpy(c_values.astype(np.float32))
     b_vec_t = torch.from_numpy(b_vec_np.astype(np.float32))
 
-    A_base = torch.sparse_csc_tensor(
-        ccol_t, row_t, A_vals_t, size=(n_destinations, n_sources)
-    )
-    c_base = torch.sparse_csc_tensor(
-        ccol_t, row_t, c_vals_t, size=(n_destinations, n_sources)
-    )
+    A_base = torch.sparse_csc_tensor(ccol_t, row_t, A_vals_t, size=(n_destinations, n_sources))
+    c_base = torch.sparse_csc_tensor(ccol_t, row_t, c_vals_t, size=(n_destinations, n_sources))
 
     # Projection map is device-agnostic
     projection_map = create_projection_map(

@@ -3,21 +3,15 @@ Single-GPU benchmark for matching problem.
 Edit the CONFIG section below to change parameters.
 """
 
-import time
 import csv
+import time
+
 import torch
-import numpy as np
+from generate_synthetic_data import generate_synthetic_matching_input_args
 
+from dualip.objectives.matching import MatchingInputArgs, MatchingSolverDualObjectiveFunction
 from dualip.optimizers.agd import AcceleratedGradientDescent
-from dualip.objectives.matching import (
-    MatchingSolverDualObjectiveFunction,
-    MatchingInputArgs,
-)
 from dualip.preprocessing.precondition import jacobi_precondition
-from generate_synthetic_data import (
-    generate_synthetic_matching_input_args,
-)
-
 
 # =============================================================================
 # CONFIG - Edit these values
@@ -30,15 +24,15 @@ TARGET_SPARSITY = 0.001
 SEED = 42
 
 # Solver parameters (fixed across all runs)
-FINAL_GAMMA = 1e-3            # Final gamma value (used directly if no decay, or as target if decay enabled)
+FINAL_GAMMA = 1e-3  # Final gamma value (used directly if no decay, or as target if decay enabled)
 MAX_ITER = 1000
 INITIAL_STEP_SIZE = 1e-3
 MAX_STEP_SIZE = 1e-1
 
 # Ablation toggles
-USE_GPU = True                # False = CPU, True = GPU
-USE_PRECONDITIONING = False    # Jacobi preconditioning
-USE_GAMMA_DECAY = False       # Regularization decay
+USE_GPU = True  # False = CPU, True = GPU
+USE_PRECONDITIONING = False  # Jacobi preconditioning
+USE_GAMMA_DECAY = False  # Regularization decay
 
 # Gamma decay settings (only used if USE_GAMMA_DECAY=True)
 GAMMA_DECAY_STEPS = 35
@@ -50,7 +44,7 @@ def compute_initial_gamma():
     if not USE_GAMMA_DECAY:
         return FINAL_GAMMA
     num_decays = MAX_ITER // GAMMA_DECAY_STEPS
-    return FINAL_GAMMA / (GAMMA_DECAY_FACTOR ** num_decays)
+    return FINAL_GAMMA / (GAMMA_DECAY_FACTOR**num_decays)
 
 
 def get_output_filename():
@@ -78,7 +72,7 @@ def run_benchmark():
     device = "cuda:0" if USE_GPU else "cpu"
     rng = None  # np.random.default_rng(SEED)
     initial_gamma = compute_initial_gamma()
-    
+
     print("=" * 60)
     print("CONFIG")
     print("=" * 60)
@@ -131,12 +125,14 @@ def run_benchmark():
         initial_step_size=INITIAL_STEP_SIZE,
         max_step_size=MAX_STEP_SIZE,
         gamma_decay_type="step" if USE_GAMMA_DECAY else None,
-        gamma_decay_params={"decay_steps": GAMMA_DECAY_STEPS, "decay_factor": GAMMA_DECAY_FACTOR} if USE_GAMMA_DECAY else None,
+        gamma_decay_params=(
+            {"decay_steps": GAMMA_DECAY_STEPS, "decay_factor": GAMMA_DECAY_FACTOR} if USE_GAMMA_DECAY else None
+        ),
         save_primal=True,
     )
 
     initial_dual = torch.zeros_like(input_args.b_vec)
-    
+
     t0 = time.time()
     result = solver.maximize(objective, initial_dual)
     solve_time = time.time() - t0
@@ -150,16 +146,16 @@ def run_benchmark():
     print(f"  Primal objective: {result.objective_result.primal_objective.item():.6f}")
     print(f"  Reg penalty: {result.objective_result.reg_penalty.item():.6f}")
     max_slack = result.objective_result.max_pos_slack
-    max_slack = max_slack.item() if hasattr(max_slack, 'item') else max_slack
+    max_slack = max_slack.item() if hasattr(max_slack, "item") else max_slack
     print(f"  Max positive slack: {max_slack:.6e}")
     print(f"  Sum positive slack: {result.objective_result.sum_pos_slack.item():.6e}")
     print("=" * 60)
-    
+
     # Save dual objective curve to CSV
     filename = get_output_filename()
-    with open(filename, 'w', newline='') as f:
+    with open(filename, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(['iteration', 'dual_objective'])
+        writer.writerow(["iteration", "dual_objective"])
         for i, obj in enumerate(result.dual_objective_log, 1):
             writer.writerow([i, obj])
     print(f"\nDual objective curve saved to: {filename}")
