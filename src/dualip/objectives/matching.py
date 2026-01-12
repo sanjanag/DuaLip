@@ -52,7 +52,7 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
         self.gamma = gamma
         self.b_vec = matching_input_args.b_vec
         self.projection_map = matching_input_args.projection_map
-        # If b_vec is provided, then this is a total single device objecitve function, otherwise this class
+        # If b_vec is provided, then this is a total single device objective function, otherwise this class
         # is being used to encapsulate single-GPU computation in the distributed setting.
         self.is_distributed = self.b_vec is None
         self.equality_mask = matching_input_args.equality_mask
@@ -62,9 +62,6 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
         # Batching variables
         self._thresholds = []
         self._bucket_ids = None
-
-        # Precompute c_rescaled = -c / gamma
-        self.c_rescaled = -1.0 / gamma * self.c
 
         # Build buckets
         self.buckets = {}
@@ -131,14 +128,15 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
         Returns:
             ObjectiveResult
         """
-        if gamma is not None:
-            self.gamma = gamma
 
         # -dual_val/gamma
-        scaled = -1.0 / self.gamma * dual_val
+        scaled = -1.0 / gamma * dual_val
 
         # intermediate = A * scaled
         left_multiply_sparse(scaled, self.A, output_tensor=self.intermediate)
+
+        # Precompute c_rescaled = -c / gamma
+        self.c_rescaled = -1.0 / gamma * self.c
 
         # intermediate += c_rescaled
         elementwise_csc(self.intermediate, self.c_rescaled, add, output_tensor=self.intermediate)
@@ -224,6 +222,7 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         self.total_grad = torch.zeros_like(self.b_vec, device=host_device)
         self.total_dual_obj = torch.zeros(1, device=host_device)
         self.total_reg = torch.zeros(1, device=host_device)
+        self.total_primal_obj = torch.zeros(1, device=host_device)
 
     def _init_distributed(self) -> None:
         if dist.is_initialized():
@@ -239,49 +238,62 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
     ) -> ObjectiveResult:
         """Compute and reduce gradients/objectives across all GPUs."""
 
-        if save_primal:
-            raise ValueError("Saving primal is not supported for distributed objective functions")
+        # if save_primal:
+        #     raise ValueError("Saving primal is not supported for distributed objective functions")
 
         # reset buffers
         self.total_grad.zero_()
         self.total_dual_obj.zero_()
+        self.total_primal_obj.zero_()
         self.total_reg.zero_()
 
         if gamma is not None:
             self.gamma = gamma
 
         # launch on each device
+        primal_var_list = []
         for solver, dev in zip(self.objectives, self.compute_devices):
             with torch.cuda.stream(self.streams[dev]):
                 dv = dual_val.to(dev, non_blocking=True)
                 res = solver.calculate(dv, gamma, save_primal)
+
+                torch.cuda.synchronize(dev)  # ensure all operations on the device are finished
+
                 self.total_grad += res.dual_gradient.to(self.host_device, non_blocking=True)
                 self.total_dual_obj += res.dual_objective.to(self.host_device)
+                self.total_primal_obj += res.dual_objective.to(
+                    self.host_device
+                )  # till this point, the dual objective is the primal objective
                 self.total_reg += res.reg_penalty.to(self.host_device)
+                primal_var_list.append(res.primal_var.to(self.host_device))
 
-        torch.cuda.synchronize()
-
+        # TODO: verify if this is correct
         # all-reduce sums
-        dist.all_reduce(self.total_grad, op=dist.ReduceOp.SUM)
-        dist.all_reduce(self.total_dual_obj, op=dist.ReduceOp.SUM)
-        dist.all_reduce(self.total_reg, op=dist.ReduceOp.SUM)
+        # dist.all_reduce(self.total_grad, op=dist.ReduceOp.SUM)
+        # dist.all_reduce(self.total_dual_obj, op=dist.ReduceOp.SUM)
+        # dist.all_reduce(self.total_reg, op=dist.ReduceOp.SUM)
 
         # final adjustments
-
         grad = self.total_grad - self.b_vec
         dual_val_times_grad = torch.dot(dual_val, grad)
-        obj = self.total_dual_obj + self.total_reg + dual_val_times_grad
+        dual_obj = self.total_dual_obj + self.total_reg + dual_val_times_grad
 
         max_pos_slack = max(torch.max(grad), 0)
         sum_pos_slack = torch.relu(grad).sum()
 
         obj_result = ObjectiveResult(
             dual_gradient=grad,
-            dual_objective=obj,
+            dual_objective=dual_obj,
             reg_penalty=self.total_reg,
             dual_val_times_grad=dual_val_times_grad,
             max_pos_slack=max_pos_slack,
             sum_pos_slack=sum_pos_slack,
         )
+
+        if save_primal:
+            primal_var = torch.cat(primal_var_list, dim=0)
+
+            obj_result.primal_var = primal_var
+            obj_result.primal_objective = self.total_primal_obj
 
         return obj_result
