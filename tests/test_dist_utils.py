@@ -83,6 +83,14 @@ def test_split_tensors_to_devices():
     assert torch.equal(a_splits[0].values(), a.values())
     assert torch.equal(c_splits[0].values(), c.values())
 
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or torch.cuda.device_count() < 3, reason="CUDA not available or not enough devices"
+)
+def test_split_tensors_to_devices_3_devices():
+    # Test case 1: 2 devices with block size 5
+    num_constraints = 5
+
     # # Test case 4: 3 devices
     devices = ["cuda:0", "cuda:1", "cuda:2"]
     num_items = 7  # Total 35 columns
