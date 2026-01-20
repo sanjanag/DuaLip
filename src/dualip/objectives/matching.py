@@ -277,7 +277,7 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         obj_result = ObjectiveResult(
             dual_gradient=grad,
             dual_objective=dual_obj,
-            reg_penalty=self.total_reg,
+            reg_penalty=total_reg,
             dual_val_times_grad=dual_val_times_grad,
             max_pos_slack=max_pos_slack,
             sum_pos_slack=sum_pos_slack,
