@@ -206,8 +206,10 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         compute_devices: list[torch.device],
     ):
         self.gamma = gamma
-        self.host_device = host_device
-        self.compute_devices = compute_devices
+        
+        self.compute_devices = [torch.device(d) for d in compute_devices]  # ["cuda:0","cuda:1"] -> devices
+        self.compute_device_indices = [d.index for d in self.compute_devices]  # [0, 1]
+        self.host_device = torch.device(host_device)  # should be torch.device("cuda:0")
         self.equality_mask = matching_input_args.equality_mask
         self.A = matching_input_args.A
         self.c = matching_input_args.c
@@ -242,7 +244,7 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
 
         # 1) Broadcast dual_val to all compute devices (includes host_device as first element if you pass it)
         # Order matters: match this list to your objectives/devices iteration below.
-        dv_per_dev = cuda_comm.broadcast(dual_val, devices=[d.index for d in self.compute_devices])
+        dv_per_dev = cuda_comm.broadcast(dual_val, devices=self.compute_device_indices)
         # dv_per_dev[i] is dual_val on compute_devices[i]
 
         grads_per_dev = []
