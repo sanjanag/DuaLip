@@ -125,6 +125,7 @@ def run_benchmark():
 
     # Create solver
     print("[3/3] Running solver...")
+    save_primal = False
     solver = AcceleratedGradientDescent(
         max_iter=MAX_ITER,
         gamma=initial_gamma,
@@ -134,7 +135,7 @@ def run_benchmark():
         gamma_decay_params=(
             {"decay_steps": GAMMA_DECAY_STEPS, "decay_factor": GAMMA_DECAY_FACTOR} if USE_GAMMA_DECAY else None
         ),
-        save_primal=False,
+        save_primal=save_primal,
     )
 
     initial_dual = torch.zeros_like(input_args.b_vec)
@@ -149,7 +150,8 @@ def run_benchmark():
     print("=" * 60)
     print(f"  Solve time: {solve_time:.3f}s ({solve_time/MAX_ITER*1000:.2f} ms/iter)")
     print(f"  Dual objective: {result.dual_objective:.6f}")
-    print(f"  Primal objective: {result.objective_result.primal_objective.item():.6f}")
+    if save_primal:
+        print(f"  Primal objective: {result.objective_result.primal_objective.item():.6f}")
     print(f"  Reg penalty: {result.objective_result.reg_penalty.item():.6f}")
     max_slack = result.objective_result.max_pos_slack
     max_slack = max_slack.item() if hasattr(max_slack, "item") else max_slack
