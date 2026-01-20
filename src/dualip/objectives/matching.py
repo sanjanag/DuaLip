@@ -8,6 +8,8 @@ from dualip.projections.base import ProjectionEntry, project
 from dualip.utils.dist_utils import global_to_local_projection_map, split_tensors_to_devices
 from dualip.utils.sparse_utils import apply_F_to_columns, elementwise_csc, left_multiply_sparse, row_sums_csc
 
+from torch.cuda import comm as cuda_comm
+
 
 @dataclass
 class MatchingInputArgs(BaseInputArgs):
@@ -220,19 +222,6 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
             part_input_args = MatchingInputArgs(A_part, c_part, pm, b_vec=None, equality_mask=self.equality_mask)
             self.objectives.append(MatchingSolverDualObjectiveFunction(part_input_args, self.gamma))
 
-        # one stream per device
-        self.streams = {dev: torch.cuda.Stream(dev) for dev in self.compute_devices}
-
-        # buffers for each device
-        self.grad_buffers = [torch.zeros_like(self.b_vec, device=self.host_device) for _ in self.compute_devices]
-        self.dual_obj_buffers = [torch.zeros(1, device=self.host_device) for _ in self.compute_devices]
-        self.reg_buffers = [torch.zeros(1, device=self.host_device) for _ in self.compute_devices]
-
-        # total buffers on host
-        self.total_grad = torch.zeros_like(self.b_vec, device=self.host_device)
-        self.total_dual_obj = torch.zeros(1, device=self.host_device)
-        self.total_reg = torch.zeros(1, device=self.host_device)
-
     def calculate(
         self,
         dual_val: torch.Tensor,
@@ -247,41 +236,38 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         if gamma is not None:
             self.gamma = gamma
 
-        # IMPORTANT: clear per-call buffers (otherwise you accumulate across iterations)
-        for buf in self.grad_buffers:
-            buf.zero_()
-        for buf in self.dual_obj_buffers:
-            buf.zero_()
-        for buf in self.reg_buffers:
-            buf.zero_()
+        # Ensure dual_val lives on host_device (cuda:0) to use fast GPU->GPU broadcast
+        if dual_val.device != self.host_device:
+            dual_val = dual_val.to(self.host_device, non_blocking=True)
 
-        for i, (solver, dev) in enumerate(zip(self.objectives, self.compute_devices)):
-            with torch.cuda.stream(self.streams[dev]):
-                dv = dual_val.to(dev, non_blocking=True)
+        # 1) Broadcast dual_val to all compute devices (includes host_device as first element if you pass it)
+        # Order matters: match this list to your objectives/devices iteration below.
+        dv_per_dev = cuda_comm.broadcast(dual_val, devices=[d.index for d in self.compute_devices])
+        # dv_per_dev[i] is dual_val on compute_devices[i]
+
+        grads_per_dev = []
+        dual_objs_per_dev = []
+        regs_per_dev = []
+
+        for solver, dev, dv in zip(self.objectives, self.compute_devices, dv_per_dev):
+            with torch.cuda.device(dev):
                 res = solver.calculate(dv, gamma, save_primal=False)
+                grads_per_dev.append(res.dual_gradient)
+                dual_objs_per_dev.append(res.dual_objective)
+                regs_per_dev.append(res.reg_penalty)
 
-                # Copy results intor per-gpu buffers
-                self.grad_buffers[i].copy_(res.dual_gradient.to(self.host_device, non_blocking=True))
-                self.dual_obj_buffers[i].copy_(res.dual_objective.to(self.host_device, non_blocking=True))
-                self.reg_buffers[i].copy_(res.reg_penalty.to(self.host_device, non_blocking=True))
+        for dev in self.compute_devices:
+            torch.cuda.synchronize(dev)
 
-        # wait for all streams to finish
-        torch.cuda.synchronize()
-
-        # reset buffers
-        self.total_grad.zero_()
-        self.total_dual_obj.zero_()
-        self.total_reg.zero_()
-        for i in range(len(self.compute_devices)):
-            self.total_grad += self.grad_buffers[i]
-            self.total_dual_obj += self.dual_obj_buffers[i]
-            self.total_reg += self.reg_buffers[i]
+        total_grad = cuda_comm.reduce_add(grads_per_dev, destination=self.host_device.index)
+        total_dual_obj = cuda_comm.reduce_add(dual_objs_per_dev, destination=self.host_device.index)
+        total_reg = cuda_comm.reduce_add(regs_per_dev, destination=self.host_device.index)
 
         # final adjustments
 
-        grad = self.total_grad - self.b_vec
+        grad = total_grad - self.b_vec
         dual_val_times_grad = torch.dot(dual_val, grad)
-        dual_obj = self.total_dual_obj + self.total_reg + dual_val_times_grad
+        dual_obj = total_dual_obj + total_reg + dual_val_times_grad
 
         max_pos_slack = max(torch.max(grad), 0)
         sum_pos_slack = torch.relu(grad).sum()
