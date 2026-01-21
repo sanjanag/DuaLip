@@ -64,6 +64,8 @@ def _generate_matching_numpy(
     if rng is None:
         rng = np.random.default_rng()
 
+    print(f"Generating matching data: {num_sources} sources x {num_destinations} destinations (sparsity={target_sparsity:.2%})")
+    
     n_sources = num_sources
     n_destinations = num_destinations
 
@@ -79,6 +81,7 @@ def _generate_matching_numpy(
     # derive avg_degree_per_source from target sparsity (fraction nnz)
     avg_degree_per_source = target_sparsity * n_destinations  # E ≈ n_sources * avg_degree_per_source
 
+    print("Step 1/5: Generating destination breadth weights...")
     # destination breadth weights Z_j -> probabilities p_j, sum_j p_j = avg_degree_per_source
     Z = rng.lognormal(mean=mu_p, sigma=sigma_p, size=n_destinations)
     Z_sum = Z.sum()
@@ -87,6 +90,7 @@ def _generate_matching_numpy(
         Z_sum = float(n_destinations)
     p = Z / Z_sum * avg_degree_per_source
 
+    print("Step 2/5: Generating destination scales and base values...")
     # destination scale s_j for a_{ij}
     s = rng.lognormal(mean=mu_s, sigma=sigma_s, size=n_destinations)
 
@@ -96,6 +100,7 @@ def _generate_matching_numpy(
     # source affinity u_i
     u = rng.lognormal(mean=mu_u, sigma=sigma_u, size=n_sources)
 
+    print("Step 3/5: Generating edges and coefficients...")
     # --- edge generation: which sources each destination can connect to -----
     expected_edges_per_dest = p * n_sources
     K = rng.poisson(expected_edges_per_dest)  # K_j sources per destination j
@@ -137,6 +142,7 @@ def _generate_matching_numpy(
 
     assert offset == total_edges
 
+    print(f"Step 4/5: Building CSC matrices ({total_edges} edges)...")
     # --- build CSC matrices (rows=destinations, cols=sources) ---------------
     # sort by column (source) for CSC layout
     order = np.argsort(source_ids, kind="stable")
@@ -153,6 +159,7 @@ def _generate_matching_numpy(
 
     row_indices = dest_sorted.astype(np.int64, copy=False)
 
+    print("Step 5/5: Computing capacity constraints via greedy assignment...")
     # --- capacity constraints: make them non-trivial via greedy assignment --
     #
     # Approximate max feasible load per destination under per-source simplex by
@@ -176,6 +183,7 @@ def _generate_matching_numpy(
     rho = rng.uniform(0.5, 1.0, size=n_destinations)  # <= 1 => typically binding
     b_vec = rho * (greedy_loads + eps)
 
+    print("Data generation complete!\n")
     return ccol_indices, row_indices, a_sorted, c_sorted, b_vec
 
 
