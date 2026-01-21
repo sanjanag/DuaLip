@@ -68,7 +68,18 @@ def get_output_filename():
 # =============================================================================
 
 
-def run_benchmark():
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Single-GPU benchmark for matching problem.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--num_sources", type=int, default=NUM_SOURCES, help="Number of sources in the matching problem"
+    )
+    return parser.parse_args()
+
+
+def run_benchmark(num_sources):
     device = "cuda:0" if USE_GPU else "cpu"
     rng = None  # np.random.default_rng(SEED)
     initial_gamma = compute_initial_gamma()
@@ -76,7 +87,7 @@ def run_benchmark():
     print("=" * 60)
     print("CONFIG")
     print("=" * 60)
-    print(f"  Data: {NUM_SOURCES} sources x {NUM_DESTINATIONS} destinations")
+    print(f"  Data: {num_sources} sources x {NUM_DESTINATIONS} destinations")
     print(f"  Sparsity: {TARGET_SPARSITY}")
     print(f"  Seed: {SEED}")
     print(f"  Device: {device}")
@@ -92,7 +103,7 @@ def run_benchmark():
     print("\n[1/3] Generating data...")
     t0 = time.time()
     input_args: MatchingInputArgs = generate_synthetic_matching_input_args(
-        num_sources=NUM_SOURCES,
+        num_sources=num_sources,
         num_destinations=NUM_DESTINATIONS,
         target_sparsity=TARGET_SPARSITY,
         device=device,
@@ -152,7 +163,7 @@ def run_benchmark():
     print("=" * 60)
 
     # Save dual objective curve to CSV
-    filename = get_output_filename()
+    filename = get_output_filename(num_sources)
     with open(filename, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["iteration", "dual_objective"])
@@ -160,8 +171,15 @@ def run_benchmark():
             writer.writerow([i, obj])
     print(f"\nDual objective curve saved to: {filename}")
 
-    return result
+    return {
+        "solve_time": solve_time,
+        "dual_objective": result.dual_objective,
+        "reg_penalty": result.objective_result.reg_penalty.item(),
+        "max_pos_slack": max_slack,
+        "sum_pos_slack": result.objective_result.sum_pos_slack.item(),
+    }
 
 
 if __name__ == "__main__":
-    run_benchmark()
+    args = parse_args()
+    run_benchmark(num_sources=args.num_sources)
