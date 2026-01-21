@@ -3,17 +3,14 @@ Single-GPU benchmark for matching problem.
 Edit the CONFIG section below to change parameters.
 """
 
+import argparse
 import csv
 import time
 
 import torch
 from generate_synthetic_data import generate_synthetic_matching_input_args
 
-from dualip.objectives.matching import (
-    MatchingInputArgs,
-    MatchingSolverDualObjectiveFunction,
-    MatchingSolverDualObjectiveFunctionDistributed,
-)
+from dualip.objectives.matching import MatchingInputArgs, MatchingSolverDualObjectiveFunctionDistributed
 from dualip.optimizers.agd import AcceleratedGradientDescent
 from dualip.preprocessing.precondition import jacobi_precondition
 
@@ -22,6 +19,7 @@ from dualip.preprocessing.precondition import jacobi_precondition
 # =============================================================================
 
 # Data parameters (fixed across all runs)
+
 NUM_SOURCES = 25_000_000
 NUM_DESTINATIONS = 10_000
 TARGET_SPARSITY = 0.001
@@ -47,6 +45,42 @@ NUM_COMPUTE_DEVICES = 2
 HOST_DEVICE = "cuda:0"
 
 
+# =============================================================================
+# END CONFIG
+# =============================================================================
+
+
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Distributed benchmark for matching problem.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+
+    parser.add_argument(
+        "--num_sources",
+        type=int,
+        default=NUM_SOURCES,
+        help="Number of sources in the matching problem",
+    )
+
+    parser.add_argument(
+        "--num_compute_devices",
+        type=int,
+        default=NUM_COMPUTE_DEVICES,
+        help="Number of compute devices (GPUs) to use",
+    )
+
+    parser.add_argument(
+        "--host_device",
+        type=str,
+        default=HOST_DEVICE,
+        help="Host device (e.g., 'cuda:0')",
+    )
+
+    return parser.parse_args()
+
+
 def compute_initial_gamma():
     """Compute initial gamma so that we end at FINAL_GAMMA after all decay steps."""
     if not USE_GAMMA_DECAY:
@@ -55,10 +89,10 @@ def compute_initial_gamma():
     return FINAL_GAMMA / (GAMMA_DECAY_FACTOR**num_decays)
 
 
-def get_output_filename():
+def get_output_filename(num_sources):
     """Generate informative filename based on parameters."""
     parts = [
-        f"s{NUM_SOURCES//1_000_000}M",
+        f"s{num_sources//1_000_000}M",
         f"d{NUM_DESTINATIONS//1_000}K",
         f"sp{TARGET_SPARSITY}",
         f"g{FINAL_GAMMA}",
@@ -71,24 +105,19 @@ def get_output_filename():
     return "_".join(parts) + ".csv"
 
 
-# =============================================================================
-# END CONFIG
-# =============================================================================
-
-
-def run_benchmark():
-    host_device = HOST_DEVICE if USE_GPU else "cpu"
-    compute_devices = [f"cuda:{i}" for i in range(NUM_COMPUTE_DEVICES)]
+def run_benchmark(num_sources, num_compute_devices, host_device):
+    compute_devices = [f"cuda:{i}" for i in range(num_compute_devices)]
     rng = None  # np.random.default_rng(SEED)
     initial_gamma = compute_initial_gamma()
 
     print("=" * 60)
     print("CONFIG")
     print("=" * 60)
-    print(f"  Data: {NUM_SOURCES} sources x {NUM_DESTINATIONS} destinations")
+    print(f"  Data: {num_sources} sources x {NUM_DESTINATIONS} destinations")
     print(f"  Sparsity: {TARGET_SPARSITY}")
     print(f"  Seed: {SEED}")
     print(f"  Device: {host_device}")
+    print(f"  Num compute devices: {num_compute_devices}")
     print(f"  Preconditioning: {USE_PRECONDITIONING}")
     print(f"  Gamma decay: {USE_GAMMA_DECAY}")
     if USE_GAMMA_DECAY:
@@ -101,10 +130,9 @@ def run_benchmark():
     print("\n[1/3] Generating data...")
     t0 = time.time()
     input_args: MatchingInputArgs = generate_synthetic_matching_input_args(
-        num_sources=NUM_SOURCES,
+        num_sources=num_sources,
         num_destinations=NUM_DESTINATIONS,
         target_sparsity=TARGET_SPARSITY,
-        # device=host_device,
         rng=rng,
     )
     data_time = time.time() - t0
@@ -165,7 +193,7 @@ def run_benchmark():
     print("=" * 60)
 
     # Save dual objective curve to CSV
-    filename = get_output_filename()
+    filename = get_output_filename(num_sources)
     with open(filename, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["iteration", "dual_objective"])
@@ -177,4 +205,9 @@ def run_benchmark():
 
 
 if __name__ == "__main__":
-    run_benchmark()
+    args = parse_args()
+    run_benchmark(
+        num_sources=args.num_sources,
+        num_compute_devices=args.num_compute_devices,
+        host_device=args.host_device,
+    )
