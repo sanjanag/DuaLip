@@ -131,8 +131,10 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
         Returns:
             ObjectiveResult
         """
-        if gamma is not None:
+        if gamma is not None and gamma != self.gamma:
             self.gamma = gamma
+            # Recompute c_rescaled when gamma changes
+            self.c_rescaled = -1.0 / gamma * self.c
 
         # -dual_val/gamma
         scaled = -1.0 / self.gamma * dual_val
