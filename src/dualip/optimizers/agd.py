@@ -98,10 +98,12 @@ class AcceleratedGradientDescent:
             beta_seq[i] = (1 - t_seq[i + 1]) / t_seq[i + 2]
         return beta_seq
 
-    def _update_gamma(self, itr: int):
+    def _update_gamma(self, itr: int, step_size: float):
         if self.gamma_decay_type == "step":
             if itr % self.gamma_decay_params["decay_steps"] == 0:
-                self.gamma = self.gamma * self.gamma_decay_params["decay_factor"]
+                decay_factor = self.gamma_decay_params["decay_factor"]
+                self.gamma = self.gamma * decay_factor
+                self.max_step_size = step_size * decay_factor
         else:
             raise ValueError(f"Unsupported gamma decay type: {self.gamma_decay_type}")
 
@@ -172,7 +174,7 @@ class AcceleratedGradientDescent:
             x = (y_new * (1.0 - self.beta_seq[i - 1])) + (y * self.beta_seq[i - 1])
             y = y_new
             if self.gamma is not None and self.gamma_decay_type is not None:
-                self._update_gamma(i)
+                self._update_gamma(i, step_size)
 
             # Log iteration metrics (will check MLflow state internally)
             iteration_metrics = {
