@@ -201,7 +201,13 @@ def run_benchmark(num_sources, num_compute_devices, host_device):
             writer.writerow([i, obj])
     print(f"\nDual objective curve saved to: {filename}")
 
-    return result
+    return {
+        "solve_time": solve_time,
+        "dual_objective": result.dual_objective,
+        "reg_penalty": result.objective_result.reg_penalty.item(),
+        "max_pos_slack": max_slack,
+        "sum_pos_slack": result.objective_result.sum_pos_slack.item(),
+    }
 
 
 if __name__ == "__main__":
