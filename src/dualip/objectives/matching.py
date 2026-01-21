@@ -266,8 +266,8 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
 
         # 1) Broadcast dual_val to all compute devices (includes host_device as first element if you pass it)
         # Order matters: match this list to your objectives/devices iteration below.
-        with CudaTimer(self.host_device) as t_bcast:
-            dv_per_dev = cuda_comm.broadcast(dual_val, devices=self.compute_device_indices)
+        # with CudaTimer(self.host_device) as t_bcast:
+        dv_per_dev = cuda_comm.broadcast(dual_val, devices=self.compute_device_indices)
 
         # dv_per_dev[i] is dual_val on compute_devices[i]
 
@@ -276,49 +276,49 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         regs_per_dev = []
         streams = {dev: torch.cuda.Stream(device=dev) for dev in self.compute_devices}
 
-        per_dev_ms = {}
+        # per_dev_ms = {}
 
         for solver, dev, dv in zip(self.objectives, self.compute_devices, dv_per_dev):
             stream = streams[dev]
             with torch.cuda.device(dev), torch.cuda.stream(stream):
-                with CudaTimer(dev) as t_calc:
-                    res = solver.calculate(dv, gamma, save_primal=False)
-                per_dev_ms[str(dev)] = t_calc.ms
+                # with CudaTimer(dev) as t_calc:
+                res = solver.calculate(dv, gamma, save_primal=False)
+                # per_dev_ms[str(dev)] = t_calc.ms
                 grads_per_dev.append(res.dual_gradient)
                 dual_objs_per_dev.append(res.dual_objective)
                 regs_per_dev.append(res.reg_penalty)
 
-        t0 = time.perf_counter()
+        # t0 = time.perf_counter()
         for dev in self.compute_devices:
             streams[dev].synchronize()
-        sync_ms = (time.perf_counter() - t0) * 1000
+        # sync_ms = (time.perf_counter() - t0) * 1000
 
-        with CudaTimer(self.host_device) as t_red_grad:
-            total_grad = cuda_comm.reduce_add(grads_per_dev, destination=self.host_device.index)
-        with CudaTimer(self.host_device) as t_red_obj:
-            total_dual_obj = cuda_comm.reduce_add(dual_objs_per_dev, destination=self.host_device.index)
-        with CudaTimer(self.host_device) as t_red_reg:
-            total_reg = cuda_comm.reduce_add(regs_per_dev, destination=self.host_device.index)
+        # with CudaTimer(self.host_device) as t_red_grad:
+        total_grad = cuda_comm.reduce_add(grads_per_dev, destination=self.host_device.index)
+        # with CudaTimer(self.host_device) as t_red_obj:
+        total_dual_obj = cuda_comm.reduce_add(dual_objs_per_dev, destination=self.host_device.index)
+        # with CudaTimer(self.host_device) as t_red_reg:
+        total_reg = cuda_comm.reduce_add(regs_per_dev, destination=self.host_device.index)
 
         # final adjustments
-        with CudaTimer(self.host_device) as t_final:
-            grad = total_grad - self.b_vec
-            dual_val_times_grad = torch.dot(dual_val, grad)
-            dual_obj = total_dual_obj + total_reg + dual_val_times_grad
+        # with CudaTimer(self.host_device) as t_final:
+        grad = total_grad - self.b_vec
+        dual_val_times_grad = torch.dot(dual_val, grad)
+        dual_obj = total_dual_obj + total_reg + dual_val_times_grad
 
-            max_pos_slack = max(torch.max(grad), 0)
-            sum_pos_slack = torch.relu(grad).sum()
-        print(
-            {
-                "broadcast_ms": t_bcast.ms,
-                "per_device_solver_ms": per_dev_ms,
-                "explicit_sync_ms": sync_ms,
-                "reduce_grad_ms": t_red_grad.ms,
-                "reduce_obj_ms": t_red_obj.ms,
-                "reduce_reg_ms": t_red_reg.ms,
-                "final_ms": t_final.ms,
-            }
-        )
+        max_pos_slack = max(torch.max(grad), 0)
+        sum_pos_slack = torch.relu(grad).sum()
+        # print(
+        #     {
+        #         "broadcast_ms": t_bcast.ms,
+        #         "per_device_solver_ms": per_dev_ms,
+        #         "explicit_sync_ms": sync_ms,
+        #         "reduce_grad_ms": t_red_grad.ms,
+        #         "reduce_obj_ms": t_red_obj.ms,
+        #         "reduce_reg_ms": t_red_reg.ms,
+        #         "final_ms": t_final.ms,
+        #     }
+        # )
 
         obj_result = ObjectiveResult(
             dual_gradient=grad,
