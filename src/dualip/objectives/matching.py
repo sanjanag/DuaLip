@@ -8,6 +8,7 @@ from dualip.projections.base import ProjectionEntry, project
 from dualip.utils.dist_utils import global_to_local_projection_map, split_tensors_to_devices
 from dualip.utils.sparse_utils import apply_F_to_columns, elementwise_csc, left_multiply_sparse, row_sums_csc
 
+import time
 from torch.cuda import comm as cuda_comm
 
 
@@ -193,6 +194,23 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
         return obj_result
 
 
+class CudaTimer:
+    def __init__(self, device):
+        self.device = torch.device(device)
+        self.start = torch.cuda.Event(enable_timing=True)
+        self.end = torch.cuda.Event(enable_timing=True)
+
+    def __enter__(self):
+        torch.cuda.synchronize(self.device)
+        self.start.record()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.end.record()
+        torch.cuda.synchronize(self.device)
+        self.ms = self.start.elapsed_time(self.end)
+
+
 class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
     """
     Wrap the single-GPU objective across multiple devices.
@@ -206,7 +224,7 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         compute_devices: list[torch.device],
     ):
         self.gamma = gamma
-        
+
         self.compute_devices = [torch.device(d) for d in compute_devices]  # ["cuda:0","cuda:1"] -> devices
         self.compute_device_indices = [d.index for d in self.compute_devices]  # [0, 1]
         self.host_device = torch.device(host_device)  # should be torch.device("cuda:0")
@@ -244,35 +262,57 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
 
         # 1) Broadcast dual_val to all compute devices (includes host_device as first element if you pass it)
         # Order matters: match this list to your objectives/devices iteration below.
-        dv_per_dev = cuda_comm.broadcast(dual_val, devices=self.compute_device_indices)
+        with CudaTimer(self.host_device) as t_bcast:
+            dv_per_dev = cuda_comm.broadcast(dual_val, devices=self.compute_device_indices)
+
         # dv_per_dev[i] is dual_val on compute_devices[i]
 
         grads_per_dev = []
         dual_objs_per_dev = []
         regs_per_dev = []
 
+        per_dev_ms = {}
+
         for solver, dev, dv in zip(self.objectives, self.compute_devices, dv_per_dev):
             with torch.cuda.device(dev):
-                res = solver.calculate(dv, gamma, save_primal=False)
+                with CudaTimer(dev) as t_calc:
+                    res = solver.calculate(dv, gamma, save_primal=False)
+                per_dev_ms[str(dev)] = t_calc.ms
                 grads_per_dev.append(res.dual_gradient)
                 dual_objs_per_dev.append(res.dual_objective)
                 regs_per_dev.append(res.reg_penalty)
 
+        t0 = time.perf_counter()
         for dev in self.compute_devices:
             torch.cuda.synchronize(dev)
+        sync_ms = (time.perf_counter() - t0) * 1000
 
-        total_grad = cuda_comm.reduce_add(grads_per_dev, destination=self.host_device.index)
-        total_dual_obj = cuda_comm.reduce_add(dual_objs_per_dev, destination=self.host_device.index)
-        total_reg = cuda_comm.reduce_add(regs_per_dev, destination=self.host_device.index)
+        with CudaTimer(self.host_device) as t_red_grad:
+            total_grad = cuda_comm.reduce_add(grads_per_dev, destination=self.host_device.index)
+        with CudaTimer(self.host_device) as t_red_obj:
+            total_dual_obj = cuda_comm.reduce_add(dual_objs_per_dev, destination=self.host_device.index)
+        with CudaTimer(self.host_device) as t_red_reg:
+            total_reg = cuda_comm.reduce_add(regs_per_dev, destination=self.host_device.index)
 
         # final adjustments
+        with CudaTimer(self.host_device) as t_final:
+            grad = total_grad - self.b_vec
+            dual_val_times_grad = torch.dot(dual_val, grad)
+            dual_obj = total_dual_obj + total_reg + dual_val_times_grad
 
-        grad = total_grad - self.b_vec
-        dual_val_times_grad = torch.dot(dual_val, grad)
-        dual_obj = total_dual_obj + total_reg + dual_val_times_grad
-
-        max_pos_slack = max(torch.max(grad), 0)
-        sum_pos_slack = torch.relu(grad).sum()
+            max_pos_slack = max(torch.max(grad), 0)
+            sum_pos_slack = torch.relu(grad).sum()
+        print(
+            {
+                "broadcast_ms": t_bcast.ms,
+                "per_device_solver_ms": per_dev_ms,
+                "explicit_sync_ms": sync_ms,
+                "reduce_grad_ms": t_red_grad.ms,
+                "reduce_obj_ms": t_red_obj.ms,
+                "reduce_reg_ms": t_red_reg.ms,
+                "final_ms": t_final.ms,
+            }
+        )
 
         obj_result = ObjectiveResult(
             dual_gradient=grad,
