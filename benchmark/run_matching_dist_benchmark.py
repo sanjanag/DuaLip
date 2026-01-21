@@ -104,7 +104,7 @@ def run_benchmark():
         num_sources=NUM_SOURCES,
         num_destinations=NUM_DESTINATIONS,
         target_sparsity=TARGET_SPARSITY,
-        device=host_device,
+        # device=host_device,
         rng=rng,
     )
     data_time = time.time() - t0
