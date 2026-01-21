@@ -225,10 +225,12 @@ def _load_cached_numpy(
 
     # In-process cache first
     if _cached_key == key and _cached_base_numpy is not None:
+        print("Loaded cached data from in-process cache")
         return _cached_base_numpy
 
     # Cross-process cache via metadata + memmaps
     try:
+        print("Loading cached data from metadata + memmaps")
         with open(_SHM_META_PATH, "r") as f:
             meta = json.load(f)
 
