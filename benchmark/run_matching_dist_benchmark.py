@@ -42,6 +42,10 @@ USE_GAMMA_DECAY = False  # Regularization decay
 GAMMA_DECAY_STEPS = 35
 GAMMA_DECAY_FACTOR = 0.7
 
+# Compute settings
+NUM_COMPUTE_DEVICES = 2
+HOST_DEVICE = "cuda:0"
+
 
 def compute_initial_gamma():
     """Compute initial gamma so that we end at FINAL_GAMMA after all decay steps."""
@@ -73,7 +77,8 @@ def get_output_filename():
 
 
 def run_benchmark():
-    device = "cuda:0" if USE_GPU else "cpu"
+    host_device = HOST_DEVICE if USE_GPU else "cpu"
+    compute_devices = [f"cuda:{i}" for i in range(NUM_COMPUTE_DEVICES)]
     rng = None  # np.random.default_rng(SEED)
     initial_gamma = compute_initial_gamma()
 
@@ -83,7 +88,7 @@ def run_benchmark():
     print(f"  Data: {NUM_SOURCES} sources x {NUM_DESTINATIONS} destinations")
     print(f"  Sparsity: {TARGET_SPARSITY}")
     print(f"  Seed: {SEED}")
-    print(f"  Device: {device}")
+    print(f"  Device: {host_device}")
     print(f"  Preconditioning: {USE_PRECONDITIONING}")
     print(f"  Gamma decay: {USE_GAMMA_DECAY}")
     if USE_GAMMA_DECAY:
@@ -99,7 +104,7 @@ def run_benchmark():
         num_sources=NUM_SOURCES,
         num_destinations=NUM_DESTINATIONS,
         target_sparsity=TARGET_SPARSITY,
-        device=device,
+        device=host_device,
         rng=rng,
     )
     data_time = time.time() - t0
@@ -116,8 +121,8 @@ def run_benchmark():
     objective = MatchingSolverDualObjectiveFunctionDistributed(
         matching_input_args=input_args,
         gamma=initial_gamma,
-        host_device=device,
-        compute_devices=[f"cuda:{i}" for i in range(2)],
+        host_device=host_device,
+        compute_devices=compute_devices,
     )
 
     obj_time = time.time() - t0
@@ -138,7 +143,7 @@ def run_benchmark():
         save_primal=save_primal,
     )
 
-    initial_dual = torch.zeros_like(input_args.b_vec)
+    initial_dual = torch.zeros_like(input_args.b_vec).to(host_device)
 
     t0 = time.time()
     result = solver.maximize(objective, initial_dual)
