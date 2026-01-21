@@ -241,7 +241,7 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
             pm = global_to_local_projection_map(self.projection_map, split_index_map[idx])
             part_input_args = MatchingInputArgs(A_part, c_part, pm, b_vec=None, equality_mask=self.equality_mask)
             self.objectives.append(MatchingSolverDualObjectiveFunction(part_input_args, self.gamma))
-        
+        self.streams = {dev: torch.cuda.Stream(device=dev) for dev in self.compute_devices}
 
     def calculate(
         self,
@@ -274,12 +274,12 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         grads_per_dev = []
         dual_objs_per_dev = []
         regs_per_dev = []
-        streams = {dev: torch.cuda.Stream(device=dev) for dev in self.compute_devices}
+        
 
         # per_dev_ms = {}
 
         for solver, dev, dv in zip(self.objectives, self.compute_devices, dv_per_dev):
-            stream = streams[dev]
+            stream = self.streams[dev]
             with torch.cuda.device(dev), torch.cuda.stream(stream):
                 # with CudaTimer(dev) as t_calc:
                 res = solver.calculate(dv, gamma, save_primal=False)
@@ -290,7 +290,7 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
 
         # t0 = time.perf_counter()
         for dev in self.compute_devices:
-            streams[dev].synchronize()
+            self.streams[dev].synchronize()
         # sync_ms = (time.perf_counter() - t0) * 1000
 
         # with CudaTimer(self.host_device) as t_red_grad:
