@@ -31,33 +31,37 @@ if __name__ == "__main__":
         num_sources = BASE_NUM_SOURCES * i
         for num_compute_devices in [1,2,3,4]:
             print(f"Running benchmark with {num_compute_devices} compute devices")
-            if num_compute_devices == 1:
-                result_metrics = run_benchmark_single(num_sources=num_sources)
-            else:
-                result_metrics = run_benchmark_dist(
-                    num_sources=num_sources, num_compute_devices=num_compute_devices, host_device=host_device
-                )
+            try:
+                if num_compute_devices == 1:
+                    result_metrics = run_benchmark_single(num_sources=num_sources)
+                else:
+                    result_metrics = run_benchmark_dist(
+                        num_sources=num_sources, num_compute_devices=num_compute_devices, host_device=host_device
+                    )
 
-            # Add iteration and num_sources to the metrics
-            result_metrics["num_sources"] = num_sources
-            result_metrics["num_compute_devices"] = num_compute_devices
+                # Add iteration and num_sources to the metrics
+                result_metrics["num_sources"] = num_sources
+                result_metrics["num_compute_devices"] = num_compute_devices
 
-            # Save to CSV immediately after execution
-            with open(output_file, "a", newline="") as f:
-                writer = csv.DictWriter(
-                    f,
-                    fieldnames=[
-                        "num_sources",
-                        "num_compute_devices",
-                        "solve_time",
-                        "dual_objective",
-                        "reg_penalty",
-                        "max_pos_slack",
-                        "sum_pos_slack",
-                    ],
-                )
-                if i == 1:
-                    writer.writeheader()
-                writer.writerow(result_metrics)
+                # Save to CSV immediately after execution
+                with open(output_file, "a", newline="") as f:
+                    writer = csv.DictWriter(
+                        f,
+                        fieldnames=[
+                            "num_sources",
+                            "num_compute_devices",
+                            "solve_time",
+                            "dual_objective",
+                            "reg_penalty",
+                            "max_pos_slack",
+                            "sum_pos_slack",
+                        ],
+                    )
+                    if i == 1:
+                        writer.writeheader()
+                    writer.writerow(result_metrics)
 
-            print(f"Results saved to: {output_file}")
+                print(f"Results saved to: {output_file}")
+            except Exception as e:
+                print(f"Error running benchmark {num_compute_devices} compute devices num_sources: {num_sources}")
+                print(f"Error running benchmark: {e}")
