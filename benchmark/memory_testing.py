@@ -29,31 +29,34 @@ if __name__ == "__main__":
     for i in range(1, 11):
         print(f"Iteration {i}:")
         num_sources = BASE_NUM_SOURCES * i
-        if num_compute_devices == 1:
-            result_metrics = run_benchmark_single(num_sources=num_sources)
-        else:
-            result_metrics = run_benchmark_dist(
-                num_sources=num_sources, num_compute_devices=num_compute_devices, host_device=host_device
-            )
+        for num_compute_devices in [1,2,3,4]:
+            if num_compute_devices == 1:
+                result_metrics = run_benchmark_single(num_sources=num_sources)
+            else:
+                result_metrics = run_benchmark_dist(
+                    num_sources=num_sources, num_compute_devices=num_compute_devices, host_device=host_device
+                )
 
-        # Add iteration and num_sources to the metrics
-        result_metrics["num_sources"] = num_sources
+            # Add iteration and num_sources to the metrics
+            result_metrics["num_sources"] = num_sources
+            result_metrics["num_compute_devices"] = num_compute_devices
 
-        # Save to CSV immediately after execution
-        with open(output_file, "a", newline="") as f:
-            writer = csv.DictWriter(
-                f,
-                fieldnames=[
-                    "num_sources",
-                    "solve_time",
-                    "dual_objective",
-                    "reg_penalty",
-                    "max_pos_slack",
-                    "sum_pos_slack",
-                ],
-            )
-            if i == 1:
-                writer.writeheader()
-            writer.writerow(result_metrics)
+            # Save to CSV immediately after execution
+            with open(output_file, "a", newline="") as f:
+                writer = csv.DictWriter(
+                    f,
+                    fieldnames=[
+                        "num_sources",
+                        "num_compute_devices",
+                        "solve_time",
+                        "dual_objective",
+                        "reg_penalty",
+                        "max_pos_slack",
+                        "sum_pos_slack",
+                    ],
+                )
+                if i == 1:
+                    writer.writeheader()
+                writer.writerow(result_metrics)
 
-        print(f"Results saved to: {output_file}")
+            print(f"Results saved to: {output_file}")
