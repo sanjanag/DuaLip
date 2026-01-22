@@ -30,6 +30,7 @@ if __name__ == "__main__":
         print(f"Iteration {i}:")
         num_sources = BASE_NUM_SOURCES * i
         for num_compute_devices in [1,2,3,4]:
+            print(f"Running benchmark with {num_compute_devices} compute devices")
             if num_compute_devices == 1:
                 result_metrics = run_benchmark_single(num_sources=num_sources)
             else:
