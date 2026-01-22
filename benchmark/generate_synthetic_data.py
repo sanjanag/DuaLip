@@ -64,8 +64,8 @@ def _generate_matching_numpy(
     if rng is None:
         rng = np.random.default_rng()
 
-    print(f"Generating matching data: {num_sources} sources x {num_destinations} destinations (sparsity={target_sparsity:.2%})")
-    
+    print(f"Generating data: sources: {num_sources} destinations: {num_destinations}  sparsity:{target_sparsity:.2%}")
+
     n_sources = num_sources
     n_destinations = num_destinations
 

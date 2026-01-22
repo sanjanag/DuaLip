@@ -3,6 +3,7 @@ Single-GPU benchmark for matching problem.
 Edit the CONFIG section below to change parameters.
 """
 
+import argparse
 import csv
 import time
 
