@@ -47,10 +47,10 @@ def compute_initial_gamma():
     return FINAL_GAMMA / (GAMMA_DECAY_FACTOR**num_decays)
 
 
-def get_output_filename():
+def get_output_filename(num_sources):
     """Generate informative filename based on parameters."""
     parts = [
-        f"s{NUM_SOURCES//1_000_000}M",
+        f"s{num_sources//1_000_000}M",
         f"d{NUM_DESTINATIONS//1_000}K",
         f"sp{TARGET_SPARSITY}",
         f"g{FINAL_GAMMA}",
