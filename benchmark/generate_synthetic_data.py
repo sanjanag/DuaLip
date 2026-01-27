@@ -106,14 +106,28 @@ def _generate_matching_numpy(
     c_values = np.empty(total_edges, dtype=np.float64)
     a_values = np.empty(total_edges, dtype=np.float64)
 
+    # Optimized edge generation using batch sampling
     offset = 0
     for j in range(n_destinations):
         k = int(K[j])
         if k == 0:
             continue
 
-        # choose K_j distinct sources for destination j
-        sources_j = rng.choice(n_sources, size=k, replace=False)
+        # Fast sampling for distinct sources: generate candidates until we have k unique values
+        # For sparse case (k << n_sources), duplicates are rare, so this is much faster than choice()
+        if k < n_sources * 0.01:  # Use fast path for sparse sampling
+            # Generate slightly more than k candidates to account for potential duplicates
+            oversample = int(k * 1.15) + 10
+            candidates = rng.integers(0, n_sources, size=oversample)
+            sources_j = np.unique(candidates)[:k]
+
+            # If still not enough unique values (rare), keep adding until we have k
+            while len(sources_j) < k:
+                extra = rng.integers(0, n_sources, size=k - len(sources_j))
+                sources_j = np.unique(np.concatenate([sources_j, extra]))[:k]
+        else:
+            # For dense sampling, fall back to choice (but this case is rare)
+            sources_j = rng.choice(n_sources, size=k, replace=False)
 
         # c_{ij} = v_j * u_i * eps_ij, clipped
         u_vals = u[sources_j]
