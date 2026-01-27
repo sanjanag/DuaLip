@@ -1,4 +1,5 @@
 import math
+import time
 from typing import Callable, Optional
 
 import torch
@@ -133,6 +134,7 @@ class AcceleratedGradientDescent:
         dual_history = []
         dual_obj_log = []  # Log of dual objective values per iteration
         step_size_log = []
+        iteration_time_log = []  # Log of iteration times in seconds
 
         # x and y for the accelerated update.
         x = initial_value.clone()
@@ -141,6 +143,7 @@ class AcceleratedGradientDescent:
 
         i = 1
         while i <= self.max_iter:
+            iter_start_time = time.time()
 
             gamma_params = {"gamma": self.gamma} if self.gamma is not None else {}
 
@@ -190,6 +193,10 @@ class AcceleratedGradientDescent:
             # Log objective result details
             log_objective_result(objective_result, step=i)
 
+            # Record iteration time
+            iter_time = time.time() - iter_start_time
+            iteration_time_log.append(iter_time)
+
             i += 1
 
         solver_result = SolverResult(
@@ -198,5 +205,6 @@ class AcceleratedGradientDescent:
             objective_result=objective_result,
             dual_objective_log=dual_obj_log,
             step_size_log=step_size_log,
+            iteration_time_log=iteration_time_log,
         )
         return solver_result

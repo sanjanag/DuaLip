@@ -1,5 +1,5 @@
-import pandas as pd
 import matplotlib.pyplot as plt
+import pandas as pd
 
 # Read data
 df = pd.read_csv("memory_testing_results.csv")

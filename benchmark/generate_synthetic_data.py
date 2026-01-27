@@ -17,17 +17,8 @@ _default_cache_dir = "/dev/shm"
 if not os.path.isdir(_default_cache_dir):
     _default_cache_dir = "."
 
-_CACHE_DIR = os.environ.get("MATCHING_SYNTH_CACHE_DIR", _default_cache_dir)
-
-# Metadata file describing shapes/dtypes and parameters used.
-_SHM_META_PATH = os.path.join(_CACHE_DIR, "matching_synth_meta.json")
-
-# Filenames for the single cached instance (only ONE at a time).
-_FN_A_CCOL = "matching_synth_A_ccol.dat"
-_FN_A_ROW = "matching_synth_A_row.dat"
-_FN_A_VALS = "matching_synth_A_vals.dat"
-_FN_C_VALS = "matching_synth_c_vals.dat"
-_FN_B_VEC = "matching_synth_b_vec.dat"
+# Default cache directory (can be overridden via environment variable or parameter)
+_DEFAULT_CACHE_DIR = os.environ.get("MATCHING_SYNTH_CACHE_DIR", _default_cache_dir)
 
 # Optional in-process cache to avoid re-mmapping within one process.
 _cached_key = None
@@ -192,8 +183,16 @@ def _generate_matching_numpy(
 # -------------------------------------------------------------------------
 
 
-def _array_path(fname: str) -> str:
-    return os.path.join(_CACHE_DIR, fname)
+def _get_cache_paths(cache_dir: str):
+    """Get all cache file paths for a given cache directory."""
+    return {
+        "meta": os.path.join(cache_dir, "matching_synth_meta.json"),
+        "A_ccol": os.path.join(cache_dir, "matching_synth_A_ccol.dat"),
+        "A_row": os.path.join(cache_dir, "matching_synth_A_row.dat"),
+        "A_vals": os.path.join(cache_dir, "matching_synth_A_vals.dat"),
+        "c_vals": os.path.join(cache_dir, "matching_synth_c_vals.dat"),
+        "b_vec": os.path.join(cache_dir, "matching_synth_b_vec.dat"),
+    }
 
 
 def _save_array_to_memmap(path: str, arr: np.ndarray) -> None:
@@ -214,6 +213,8 @@ def _load_cached_numpy(
     num_sources: int,
     num_destinations: int,
     target_sparsity: float,
+    dtype: torch.dtype,
+    cache_dir: str,
 ):
     """
     Try to load a cached instance (NumPy arrays) from in-process cache or memmap.
@@ -221,7 +222,8 @@ def _load_cached_numpy(
     """
     global _cached_key, _cached_base_numpy
 
-    key = (int(num_sources), int(num_destinations), float(target_sparsity))
+    dtype_str = str(dtype)
+    key = (int(num_sources), int(num_destinations), float(target_sparsity), dtype_str, cache_dir)
 
     # In-process cache first
     if _cached_key == key and _cached_base_numpy is not None:
@@ -230,14 +232,16 @@ def _load_cached_numpy(
 
     # Cross-process cache via metadata + memmaps
     try:
-        print("Loading cached data from metadata + memmaps")
-        with open(_SHM_META_PATH, "r") as f:
+        print(f"Loading cached data from {cache_dir}")
+        cache_paths = _get_cache_paths(cache_dir)
+        with open(cache_paths["meta"], "r") as f:
             meta = json.load(f)
 
         if (
             int(meta.get("num_sources", -1)) != int(num_sources)
             or int(meta.get("num_destinations", -1)) != int(num_destinations)
             or float(meta.get("target_sparsity", -1.0)) != float(target_sparsity)
+            or str(meta.get("dtype", "")) != dtype_str
         ):
             return None
 
@@ -245,27 +249,27 @@ def _load_cached_numpy(
         dtypes_meta = {k: np.dtype(v) for k, v in meta["dtypes"].items()}
 
         ccol_np = _load_array_from_memmap(
-            _array_path(_FN_A_CCOL),
+            cache_paths["A_ccol"],
             tuple(shapes["A_ccol"]),
             dtypes_meta["A_ccol"],
         )
         row_np = _load_array_from_memmap(
-            _array_path(_FN_A_ROW),
+            cache_paths["A_row"],
             tuple(shapes["A_row"]),
             dtypes_meta["A_row"],
         )
         A_vals_np = _load_array_from_memmap(
-            _array_path(_FN_A_VALS),
+            cache_paths["A_vals"],
             tuple(shapes["A_vals"]),
             dtypes_meta["A_vals"],
         )
         c_vals_np = _load_array_from_memmap(
-            _array_path(_FN_C_VALS),
+            cache_paths["c_vals"],
             tuple(shapes["c_vals"]),
             dtypes_meta["c_vals"],
         )
         b_vec_np = _load_array_from_memmap(
-            _array_path(_FN_B_VEC),
+            cache_paths["b_vec"],
             tuple(shapes["b_vec"]),
             dtypes_meta["b_vec"],
         )
@@ -289,6 +293,8 @@ def _save_cached_numpy(
     num_sources: int,
     num_destinations: int,
     target_sparsity: float,
+    dtype: torch.dtype,
+    cache_dir: str,
     ccol_indices: np.ndarray,
     row_indices: np.ndarray,
     a_values: np.ndarray,
@@ -298,18 +304,21 @@ def _save_cached_numpy(
     """Save NumPy arrays + metadata to memmaps and update in-process cache."""
     global _cached_key, _cached_base_numpy
 
-    key = (int(num_sources), int(num_destinations), float(target_sparsity))
+    dtype_str = str(dtype)
+    key = (int(num_sources), int(num_destinations), float(target_sparsity), dtype_str, cache_dir)
 
-    _save_array_to_memmap(_array_path(_FN_A_CCOL), ccol_indices)
-    _save_array_to_memmap(_array_path(_FN_A_ROW), row_indices)
-    _save_array_to_memmap(_array_path(_FN_A_VALS), a_values)
-    _save_array_to_memmap(_array_path(_FN_C_VALS), c_values)
-    _save_array_to_memmap(_array_path(_FN_B_VEC), b_vec_np)
+    cache_paths = _get_cache_paths(cache_dir)
+    _save_array_to_memmap(cache_paths["A_ccol"], ccol_indices)
+    _save_array_to_memmap(cache_paths["A_row"], row_indices)
+    _save_array_to_memmap(cache_paths["A_vals"], a_values)
+    _save_array_to_memmap(cache_paths["c_vals"], c_values)
+    _save_array_to_memmap(cache_paths["b_vec"], b_vec_np)
 
     meta = {
         "num_sources": int(num_sources),
         "num_destinations": int(num_destinations),
         "target_sparsity": float(target_sparsity),
+        "dtype": dtype_str,
         "shapes": {
             "A_ccol": list(ccol_indices.shape),
             "A_row": list(row_indices.shape),
@@ -325,8 +334,8 @@ def _save_cached_numpy(
             "b_vec": str(b_vec_np.dtype),
         },
     }
-    os.makedirs(os.path.dirname(_SHM_META_PATH), exist_ok=True)
-    with open(_SHM_META_PATH, "w") as f:
+    os.makedirs(os.path.dirname(cache_paths["meta"]), exist_ok=True)
+    with open(cache_paths["meta"], "w") as f:
         json.dump(meta, f)
 
     _cached_key = key
@@ -345,6 +354,7 @@ def generate_synthetic_matching_input_args(
     device: str = "cpu",
     dtype: torch.dtype = torch.float32,
     rng: np.random.Generator | None = None,
+    cache_dir: str | None = None,
 ) -> MatchingInputArgs:
     """
     Public API: generate a synthetic matching LP instance as MatchingInputArgs.
@@ -361,15 +371,20 @@ def generate_synthetic_matching_input_args(
     Caching behavior
     ----------------
     - If rng is None: use a cache keyed by
-        (num_sources, num_destinations, target_sparsity).
-      The cache is backed by memmap files in _CACHE_DIR (typically /dev/shm),
+        (num_sources, num_destinations, target_sparsity, dtype, cache_dir).
+      The cache is backed by memmap files in cache_dir,
       plus a tiny JSON metadata file. This works across Python processes.
 
     - If rng is not None: bypass cache entirely and generate fresh data.
+
+    - cache_dir: Directory where cached data should be saved. If None, uses _DEFAULT_CACHE_DIR.
     """
+    if cache_dir is None:
+        cache_dir = _DEFAULT_CACHE_DIR
+
     # Try cache first if rng is None
     if rng is None:
-        cached = _load_cached_numpy(num_sources, num_destinations, target_sparsity)
+        cached = _load_cached_numpy(num_sources, num_destinations, target_sparsity, dtype, cache_dir)
     else:
         cached = None
 
@@ -388,6 +403,8 @@ def generate_synthetic_matching_input_args(
                 num_sources=num_sources,
                 num_destinations=num_destinations,
                 target_sparsity=target_sparsity,
+                dtype=dtype,
+                cache_dir=cache_dir,
                 ccol_indices=ccol_indices,
                 row_indices=row_indices,
                 a_values=a_values,
@@ -400,13 +417,21 @@ def generate_synthetic_matching_input_args(
     n_sources = num_sources
     n_destinations = num_destinations
 
-    # Build torch CSC tensors (canonical CPU/float32)
+    # Convert dtype to numpy dtype
+    if dtype == torch.float32:
+        np_dtype = np.float32
+    elif dtype == torch.float64:
+        np_dtype = np.float64
+    else:
+        np_dtype = np.float32  # fallback
+
+    # Build torch CSC tensors with the requested dtype
     ccol_t = torch.from_numpy(ccol_indices)
     row_t = torch.from_numpy(row_indices)
-    A_vals_t = torch.from_numpy(a_values.astype(np.float32))
+    A_vals_t = torch.from_numpy(a_values.astype(np_dtype))
     # Negate c for minimization convention (if your solver expects that)
-    c_vals_t = -torch.from_numpy(c_values.astype(np.float32))
-    b_vec_t = torch.from_numpy(b_vec_np.astype(np.float32))
+    c_vals_t = -torch.from_numpy(c_values.astype(np_dtype))
+    b_vec_t = torch.from_numpy(b_vec_np.astype(np_dtype))
 
     A_base = torch.sparse_csc_tensor(ccol_t, row_t, A_vals_t, size=(n_destinations, n_sources))
     c_base = torch.sparse_csc_tensor(ccol_t, row_t, c_vals_t, size=(n_destinations, n_sources))

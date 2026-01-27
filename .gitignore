@@ -214,3 +214,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Benchmark run scripts (user-specific)
+benchmark/run_*.sh

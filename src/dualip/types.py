@@ -48,3 +48,4 @@ class SolverResult:
     objective_result: ObjectiveResult
     dual_objective_log: list[float]
     step_size_log: list[float]
+    iteration_time_log: list[float] = None  # Time taken for each iteration in seconds
