@@ -210,28 +210,18 @@ def profile_simplex_internals(objective, dual_val, num_runs=50):
     return results
 
 
-def run_detailed_profiling(
-    num_sources=25_000_000,
-    num_destinations=10_000,
-    target_sparsity=0.001,
-    device='cuda:0',
+def run_detailed_profiling_single(
+    num_sources,
+    num_destinations,
+    target_sparsity,
+    device,
 ):
     """
-    Run detailed projection profiling.
+    Run detailed projection profiling for a single configuration.
     """
-    if device.startswith('cuda') and not torch.cuda.is_available():
-        print("CUDA not available")
-        return
-
-    print("=" * 80)
-    print("DETAILED PROJECTION PROFILING")
-    print("=" * 80)
-    print(f"Device: {device}")
-    print(f"Sources: {num_sources:,}")
-    print(f"Destinations: {num_destinations:,}")
-    print(f"Sparsity: {target_sparsity}")
-    print("=" * 80)
-    print()
+    print(f"\n{'=' * 80}")
+    print(f"Testing num_sources = {num_sources:,}")
+    print(f"{'=' * 80}")
 
     # Generate data
     print("Generating data...")
@@ -243,9 +233,8 @@ def run_detailed_profiling(
         cache_dir='./benchmark_data/cache',
     )
 
-    print(f"Matrix shape: {input_args.A.shape}")
-    print(f"Total nnz: {input_args.A._nnz():,}")
-    print()
+    print(f"  Matrix shape: {input_args.A.shape}")
+    print(f"  Total nnz: {input_args.A._nnz():,}")
 
     # Create objective
     print("Creating objective...")
@@ -261,91 +250,184 @@ def run_detailed_profiling(
     print("Profiling projection breakdown (50 runs)...")
     times = profile_projection_breakdown(objective, dual_val, num_runs=50)
 
-    # Print results
-    print("\n" + "=" * 80)
-    print("PROJECTION BREAKDOWN (mean over 50 runs)")
-    print("=" * 80)
-    print()
-
+    # Print results for this run
+    print(f"\nResults (mean over 50 runs):")
     total_proj = times['total_projection']
 
-    print(f"{'Operation':<30} {'Time (ms)':<12} {'% of Projection':<15}")
-    print("-" * 80)
+    print(f"  {'Operation':<30} {'Time (ms)':<12} {'% of Projection':<15}")
+    print(f"  {'-' * 60}")
 
     operations = [
-        ('bucket_metadata', 'Bucket metadata setup'),
+        ('bucket_metadata', 'Bucket metadata'),
         ('allocate_dense', 'Allocate dense block'),
         ('sparse_to_dense', 'Sparse→Dense gather'),
-        ('simplex_math', 'Simplex projection math'),
+        ('simplex_math', 'Simplex projection'),
         ('dense_to_sparse', 'Dense→Sparse scatter'),
     ]
 
     for key, label in operations:
         t = times[key]
         pct = 100 * t / total_proj if total_proj > 0 else 0
-        print(f"{label:<30} {t:>10.2f}ms {pct:>13.1f}%")
+        print(f"  {label:<30} {t:>10.2f}ms {pct:>13.1f}%")
 
-    print("-" * 80)
-    print(f"{'TOTAL PROJECTION':<30} {total_proj:>10.2f}ms {'100.0%':>13}")
-    print()
-
-    # Analyze results
-    print("=" * 80)
-    print("ANALYSIS")
-    print("=" * 80)
-    print()
+    print(f"  {'-' * 60}")
+    print(f"  {'TOTAL':<30} {total_proj:>10.2f}ms {'100.0%':>13}")
 
     memory_ops = times['sparse_to_dense'] + times['dense_to_sparse']
     memory_pct = 100 * memory_ops / total_proj
-
-    print(f"1. Memory operations (gather + scatter): {memory_ops:.1f}ms ({memory_pct:.1f}%)")
-    print(f"   - Sparse→Dense: {times['sparse_to_dense']:.1f}ms")
-    print(f"   - Dense→Sparse: {times['dense_to_sparse']:.1f}ms")
-    print()
-
-    print(f"2. Simplex projection math: {times['simplex_math']:.1f}ms ({100*times['simplex_math']/total_proj:.1f}%)")
-    print()
-
-    print(f"3. Overhead (metadata + allocation): {times['bucket_metadata'] + times['allocate_dense']:.1f}ms")
-    print()
-
-    if memory_pct > 60:
-        print("⚠️  PRIMARY BOTTLENECK: Memory operations (gather/scatter)")
-        print("   → This is memory bandwidth bound")
-        print("   → Consider fused kernels to eliminate intermediate dense format")
-    elif times['simplex_math'] / total_proj > 0.5:
-        print("⚠️  PRIMARY BOTTLENECK: Simplex projection computation")
-        print("   → Consider optimizing the projection algorithm")
-    else:
-        print("✓ No single dominant bottleneck - relatively balanced")
-
-    print()
-
-    # Profile simplex internals
-    print("=" * 80)
-    print("SIMPLEX PROJECTION MICRO-BENCHMARKS")
-    print("=" * 80)
-    simplex_results = profile_simplex_internals(objective, dual_val, num_runs=100)
-
-    print("\n" + "=" * 80)
-    print()
+    print(f"\n  Memory ops (gather+scatter): {memory_ops:.1f}ms ({memory_pct:.1f}%)")
 
     return times
+
+
+def run_scaling_profiling(
+    num_sources_list=[10_000_000, 20_000_000, 30_000_000, 40_000_000],
+    num_destinations=10_000,
+    target_sparsity=0.001,
+    device='cuda:0',
+):
+    """
+    Run detailed projection profiling across multiple problem sizes.
+
+    Default uses same sizes as objective.calculate() profiling (1x, 2x, 3x, 4x).
+    """
+    if device.startswith('cuda') and not torch.cuda.is_available():
+        print("CUDA not available")
+        device = 'cpu'
+
+    print("=" * 80)
+    print("DETAILED PROJECTION PROFILING - SCALING ANALYSIS")
+    print("=" * 80)
+    print(f"Device: {device}")
+    print(f"Destinations: {num_destinations:,}")
+    print(f"Sparsity: {target_sparsity}")
+    print(f"Testing sizes: {[f'{s:,}' for s in num_sources_list]}")
+    print("=" * 80)
+
+    results = []
+
+    for num_sources in num_sources_list:
+        times = run_detailed_profiling_single(
+            num_sources=num_sources,
+            num_destinations=num_destinations,
+            target_sparsity=target_sparsity,
+            device=device,
+        )
+
+        if times:
+            results.append({
+                'num_sources': num_sources,
+                **times
+            })
+
+        # Clean up
+        if device.startswith('cuda'):
+            torch.cuda.empty_cache()
+
+    # Print summary
+    if len(results) >= 2:
+        print("\n\n" + "=" * 100)
+        print("SUMMARY: PROJECTION BREAKDOWN SCALING")
+        print("=" * 100)
+        print()
+
+        header = (f"{'Sources':<12} {'Metadata':<11} {'Allocate':<11} {'S→D Gather':<12} "
+                  f"{'Simplex':<11} {'D→S Scatter':<12} {'TOTAL':<11}")
+        print(header)
+        print("-" * 100)
+
+        for r in results:
+            print(f"{r['num_sources']:>10,}  "
+                  f"{r['bucket_metadata']:>9.1f}ms {r['allocate_dense']:>9.1f}ms "
+                  f"{r['sparse_to_dense']:>10.1f}ms {r['simplex_math']:>9.1f}ms "
+                  f"{r['dense_to_sparse']:>10.1f}ms {r['total_projection']:>9.1f}ms")
+
+        # Scaling analysis
+        print("\n" + "=" * 100)
+        print(f"SCALING FACTORS (relative to first run: {results[0]['num_sources']:,} sources)")
+        print("=" * 100)
+        print()
+
+        base = results[0]
+        header = (f"{'Scale':<8} {'Sources':<12} {'Metadata':<11} {'Allocate':<11} {'S→D Gather':<12} "
+                  f"{'Simplex':<11} {'D→S Scatter':<12} {'TOTAL':<11}")
+        print(header)
+        print("-" * 100)
+
+        for idx, r in enumerate(results):
+            scale_factor = (idx + 1)
+
+            meta_ratio = r['bucket_metadata'] / base['bucket_metadata'] if base['bucket_metadata'] > 0 else 0
+            alloc_ratio = r['allocate_dense'] / base['allocate_dense'] if base['allocate_dense'] > 0 else 0
+            s2d_ratio = r['sparse_to_dense'] / base['sparse_to_dense'] if base['sparse_to_dense'] > 0 else 0
+            simplex_ratio = r['simplex_math'] / base['simplex_math'] if base['simplex_math'] > 0 else 0
+            d2s_ratio = r['dense_to_sparse'] / base['dense_to_sparse'] if base['dense_to_sparse'] > 0 else 0
+            total_ratio = r['total_projection'] / base['total_projection'] if base['total_projection'] > 0 else 0
+
+            print(f"{scale_factor}x      {r['num_sources']:>10,}  "
+                  f"{meta_ratio:>9.2f}x {alloc_ratio:>9.2f}x "
+                  f"{s2d_ratio:>10.2f}x {simplex_ratio:>9.2f}x "
+                  f"{d2s_ratio:>10.2f}x {total_ratio:>9.2f}x")
+
+        # Analysis
+        print("\n" + "=" * 100)
+        print("BOTTLENECK IDENTIFICATION")
+        print("=" * 100)
+        print()
+
+        last = results[-1]
+        total = last['total_projection']
+
+        memory_ops = last['sparse_to_dense'] + last['dense_to_sparse']
+        memory_pct = 100 * memory_ops / total
+
+        print(f"At largest scale ({last['num_sources']:,} sources):")
+        print()
+        print(f"1. Memory operations: {memory_ops:.1f}ms ({memory_pct:.1f}%)")
+        print(f"   - Sparse→Dense gather: {last['sparse_to_dense']:.1f}ms")
+        print(f"   - Dense→Sparse scatter: {last['dense_to_sparse']:.1f}ms")
+        print()
+        print(f"2. Simplex projection math: {last['simplex_math']:.1f}ms ({100*last['simplex_math']/total:.1f}%)")
+        print()
+        print(f"3. Overhead: {last['bucket_metadata'] + last['allocate_dense']:.1f}ms ({100*(last['bucket_metadata'] + last['allocate_dense'])/total:.1f}%)")
+        print()
+
+        if memory_pct > 55:
+            print("⚠️  PRIMARY BOTTLENECK: Memory operations (gather/scatter)")
+            print("   → Memory bandwidth bound")
+            print("   → Random access patterns hurt cache efficiency")
+            print("   → Consider: fused kernels, avoid dense intermediate format")
+        elif last['simplex_math'] / total > 0.50:
+            print("⚠️  PRIMARY BOTTLENECK: Simplex projection math")
+            print("   → Computation bound")
+            print("   → Consider: optimized projection algorithm")
+        else:
+            print("✓ Relatively balanced - no single dominant bottleneck")
+
+    print("\n" + "=" * 100)
+
+    return results
 
 
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Detailed projection profiling")
-    parser.add_argument('--sources', type=int, default=25_000_000, help='Number of sources')
+    parser.add_argument(
+        '--sources',
+        type=int,
+        nargs='+',
+        default=[10_000_000, 20_000_000, 30_000_000, 40_000_000],
+        help='List of num_sources values (default: 10M, 20M, 30M, 40M matching objective profiling)'
+    )
     parser.add_argument('--destinations', type=int, default=10_000, help='Number of destinations')
     parser.add_argument('--sparsity', type=float, default=0.001, help='Target sparsity')
     parser.add_argument('--device', type=str, default='cuda:0', help='Device')
 
     args = parser.parse_args()
 
-    results = run_detailed_profiling(
-        num_sources=args.sources,
+    results = run_scaling_profiling(
+        num_sources_list=args.sources,
         num_destinations=args.destinations,
         target_sparsity=args.sparsity,
         device=args.device,
