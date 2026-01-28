@@ -287,13 +287,16 @@ def profile_duchi_breakdown(objective, dual_val, num_runs=50):
 
 
 def run_duchi_profiling(
-    num_sources=25_000_000,
+    num_sources_list=[10_000_000, 20_000_000, 30_000_000, 40_000_000],
     num_destinations=10_000,
     target_sparsity=0.001,
     device='cuda:0',
 ):
     """
-    Profile the Duchi algorithm breakdown at a specific scale.
+    Profile the Duchi algorithm breakdown across different num_sources values.
+
+    Default tests at 10M, 20M, 30M, 40M sources (1x, 2x, 3x, 4x scaling)
+    for easy comparison with other profiling scripts.
     """
     if device.startswith('cuda') and not torch.cuda.is_available():
         print("CUDA not available, falling back to CPU")
@@ -304,98 +307,163 @@ def run_duchi_profiling(
     print("=" * 80)
     print(f"Device: {device}")
     print(f"Profiling method: CUDA Events (50 runs, averaged over all buckets)")
-    print(f"Num sources: {num_sources:,}")
     print(f"Num destinations: {num_destinations:,}")
     print(f"Target sparsity: {target_sparsity}")
     print("=" * 80)
     print()
 
-    # Generate data
-    print("Generating synthetic data...")
-    input_args = generate_synthetic_matching_input_args(
-        num_sources=num_sources,
-        num_destinations=num_destinations,
-        target_sparsity=target_sparsity,
-        device=device,
-        cache_dir='./benchmark_data/cache',
-    )
+    results = []
 
-    nnz = input_args.A._nnz()
-    avg_nnz_per_col = nnz / num_sources
-    print(f"  Matrix shape: {input_args.A.shape}")
-    print(f"  Total nnz: {nnz:,}")
-    print(f"  Avg nnz per column: {avg_nnz_per_col:.1f}")
+    for num_sources in num_sources_list:
+        print(f"\n{'=' * 80}")
+        print(f"Testing num_sources = {num_sources:,}")
+        print(f"{'=' * 80}")
 
-    # Create objective
-    print("Creating objective function...")
-    objective = MatchingSolverDualObjectiveFunction(
-        matching_input_args=input_args,
-        gamma=1e-3,
-        batching=True,
-    )
+        # Generate data
+        print("Generating synthetic data...")
+        input_args = generate_synthetic_matching_input_args(
+            num_sources=num_sources,
+            num_destinations=num_destinations,
+            target_sparsity=target_sparsity,
+            device=device,
+            cache_dir='./benchmark_data/cache',
+        )
 
-    # Initialize dual variables
-    dual_val = torch.zeros_like(input_args.b_vec)
+        nnz = input_args.A._nnz()
+        avg_nnz_per_col = nnz / num_sources
+        print(f"  Matrix shape: {input_args.A.shape}")
+        print(f"  Total nnz: {nnz:,}")
+        print(f"  Avg nnz per column: {avg_nnz_per_col:.1f}")
 
-    # Profile
-    print("Profiling Duchi algorithm breakdown...")
-    times = profile_duchi_breakdown(objective, dual_val, num_runs=50)
+        # Create objective
+        print("Creating objective function...")
+        objective = MatchingSolverDualObjectiveFunction(
+            matching_input_args=input_args,
+            gamma=1e-3,
+            batching=True,
+        )
 
-    # Print results
-    print(f"\nResults (mean over 50 runs, averaged across all buckets):")
-    print(f"  {'Operation':<25} {'Time (ms)':<12} {'% of Total':<12}")
-    print(f"  {'-' * 50}")
-    total_time = times['total_duchi']
-    for key in ['clamp_setup', 'feasibility_check', 'topk_shortcut', 'sort',
-                'cumsum', 'threshold_compute', 'final_projection']:
-        t = times[key]
-        pct = 100 * t / total_time if total_time > 0 else 0
-        print(f"  {key:<25} {t:>10.2f}ms {pct:>10.1f}%")
-    print(f"  {'-' * 50}")
-    print(f"  {'TOTAL':<25} {total_time:>10.2f}ms 100.0%")
+        # Initialize dual variables
+        dual_val = torch.zeros_like(input_args.b_vec)
 
-    # Analysis
-    print("\n" + "=" * 80)
-    print("BOTTLENECK ANALYSIS")
-    print("=" * 80)
+        # Profile
+        print("Profiling Duchi algorithm breakdown...")
+        times = profile_duchi_breakdown(objective, dual_val, num_runs=50)
 
-    components = [
-        ('sort', times['sort']),
-        ('threshold_compute', times['threshold_compute']),
-        ('cumsum', times['cumsum']),
-        ('topk_shortcut', times['topk_shortcut']),
-        ('final_projection', times['final_projection']),
-        ('feasibility_check', times['feasibility_check']),
-        ('clamp_setup', times['clamp_setup']),
-    ]
-    components_sorted = sorted(components, key=lambda x: x[1], reverse=True)
+        # Store results
+        results.append({
+            'num_sources': num_sources,
+            'nnz': nnz,
+            'avg_nnz_per_col': avg_nnz_per_col,
+            **times
+        })
 
-    print(f"\nTime breakdown within Duchi simplex projection:")
-    for i, (name, time_ms) in enumerate(components_sorted, 1):
-        pct = 100 * time_ms / total_time
-        print(f"   {i}. {name:<20} {time_ms:>8.2f}ms  ({pct:>5.1f}%)")
+        # Print results
+        print(f"\nResults (mean over 50 runs, averaged across all buckets):")
+        print(f"  {'Operation':<25} {'Time (ms)':<12} {'% of Total':<12}")
+        print(f"  {'-' * 50}")
+        total_time = times['total_duchi']
+        for key in ['clamp_setup', 'feasibility_check', 'topk_shortcut', 'sort',
+                    'cumsum', 'threshold_compute', 'final_projection']:
+            t = times[key]
+            pct = 100 * t / total_time if total_time > 0 else 0
+            print(f"  {key:<25} {t:>10.2f}ms {pct:>10.1f}%")
+        print(f"  {'-' * 50}")
+        print(f"  {'TOTAL':<25} {total_time:>10.2f}ms 100.0%")
 
-    # Map operations to code lines
-    print("\n" + "=" * 80)
-    print("CODE LOCATION REFERENCE")
-    print("=" * 80)
-    print("\nAll operations are in src/dualip/projections/simplex.py (_duchi_proj):")
-    print(f"  clamp_setup:        Lines 147-151 (torch.clamp, mask initialization)")
-    print(f"  feasibility_check:  Lines 153-159 (early exit if already feasible)")
-    print(f"  topk_shortcut:      Lines 166-194 (torch.topk for one-hot detection)")
-    print(f"  sort:               Line 208 (to_project_sub.sort())")
-    print(f"  cumsum:             Line 211 (u_sorted.cumsum())")
-    print(f"  threshold_compute:  Lines 214-228 (rho, theta calculation)")
-    print(f"  final_projection:   Lines 231-234 (clamp and scatter)")
+        # Clean up
+        del objective, input_args, dual_val
+        if device.startswith('cuda'):
+            torch.cuda.empty_cache()
 
-    print("\n" + "=" * 80)
+    # Print summary
+    print("\n\n" + "=" * 110)
+    print("SUMMARY: DUCHI ALGORITHM SCALING ANALYSIS")
+    print("=" * 110)
+    print()
 
-    # Clean up
-    del objective, input_args, dual_val
-    if device.startswith('cuda'):
-        torch.cuda.empty_cache()
+    # Header
+    header = (f"{'Sources':<12} {'nnz':<13} {'clamp':<10} {'feas':<10} {'topk':<10} "
+              f"{'sort':<10} {'cumsum':<10} {'thresh':<10} {'proj':<10} {'TOTAL':<10}")
+    print(header)
+    print("-" * 110)
 
-    return times
+    # Data rows
+    for r in results:
+        total = r['total_duchi']
+        print(f"{r['num_sources']:>10,}  {r['nnz']:>11,}  "
+              f"{r['clamp_setup']:>8.1f}ms {r['feasibility_check']:>8.1f}ms {r['topk_shortcut']:>8.1f}ms "
+              f"{r['sort']:>8.1f}ms {r['cumsum']:>8.1f}ms {r['threshold_compute']:>8.1f}ms "
+              f"{r['final_projection']:>8.1f}ms {total:>8.1f}ms")
+
+    # Scaling factors
+    if len(results) >= 2:
+        base = results[0]
+
+        print("\n" + "=" * 110)
+        print(f"SCALING FACTORS (relative to first run: {base['num_sources']:,} sources)")
+        print("=" * 110)
+        print()
+        header = (f"{'Scale':<8} {'Sources':<12} {'nnz_ratio':<11} {'clamp':<10} {'feas':<10} {'topk':<10} "
+                  f"{'sort':<10} {'cumsum':<10} {'thresh':<10} {'proj':<10} {'TOTAL':<10}")
+        print(header)
+        print("-" * 110)
+
+        for idx, r in enumerate(results):
+            scale_factor = (idx + 1)
+            nnz_ratio = r['nnz'] / base['nnz']
+
+            ratios = {}
+            for key in ['clamp_setup', 'feasibility_check', 'topk_shortcut', 'sort',
+                       'cumsum', 'threshold_compute', 'final_projection', 'total_duchi']:
+                ratios[key] = r[key] / base[key] if base[key] > 0 else 0
+
+            print(f"{scale_factor}x      {r['num_sources']:>10,}  {nnz_ratio:>9.2f}x "
+                  f"{ratios['clamp_setup']:>8.2f}x {ratios['feasibility_check']:>8.2f}x {ratios['topk_shortcut']:>8.2f}x "
+                  f"{ratios['sort']:>8.2f}x {ratios['cumsum']:>8.2f}x {ratios['threshold_compute']:>8.2f}x "
+                  f"{ratios['final_projection']:>8.2f}x {ratios['total_duchi']:>8.2f}x")
+
+    # Bottleneck analysis
+    if results:
+        print("\n" + "=" * 110)
+        print("BOTTLENECK ANALYSIS")
+        print("=" * 110)
+
+        last = results[-1]
+        total_time = last['total_duchi']
+
+        print(f"\n1. Time breakdown at largest scale ({last['num_sources']:,} sources):")
+
+        components = [
+            ('sort', last['sort']),
+            ('threshold_compute', last['threshold_compute']),
+            ('cumsum', last['cumsum']),
+            ('topk_shortcut', last['topk_shortcut']),
+            ('final_projection', last['final_projection']),
+            ('feasibility_check', last['feasibility_check']),
+            ('clamp_setup', last['clamp_setup']),
+        ]
+        components_sorted = sorted(components, key=lambda x: x[1], reverse=True)
+
+        for i, (name, time_ms) in enumerate(components_sorted, 1):
+            pct = 100 * time_ms / total_time
+            print(f"   {i}. {name:<20} {time_ms:>8.1f}ms  ({pct:>5.1f}%)")
+        print(f"   {'─' * 35}")
+        print(f"   {'TOTAL':<20} {total_time:>8.1f}ms  (100.0%)")
+
+        # Code location reference
+        print("\n2. Code location reference (src/dualip/projections/simplex.py):")
+        print(f"   clamp_setup:        Lines 147-151 (torch.clamp, mask initialization)")
+        print(f"   feasibility_check:  Lines 153-159 (early exit if already feasible)")
+        print(f"   topk_shortcut:      Lines 166-194 (torch.topk for one-hot detection)")
+        print(f"   sort:               Line 208 (to_project_sub.sort())")
+        print(f"   cumsum:             Line 211 (u_sorted.cumsum())")
+        print(f"   threshold_compute:  Lines 214-228 (rho, theta calculation)")
+        print(f"   final_projection:   Lines 231-234 (clamp and scatter)")
+
+    print("\n" + "=" * 110)
+
+    return results
 
 
 if __name__ == "__main__":
@@ -405,8 +473,9 @@ if __name__ == "__main__":
     parser.add_argument(
         '--sources',
         type=int,
-        default=25_000_000,
-        help='Number of sources'
+        nargs='+',
+        default=[10_000_000, 20_000_000, 30_000_000, 40_000_000],
+        help='List of num_sources values to test (default: 10M, 20M, 30M, 40M for 1x, 2x, 3x, 4x comparison)'
     )
     parser.add_argument(
         '--destinations',
@@ -429,7 +498,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     results = run_duchi_profiling(
-        num_sources=args.sources,
+        num_sources_list=args.sources,
         num_destinations=args.destinations,
         target_sparsity=args.sparsity,
         device=args.device,
