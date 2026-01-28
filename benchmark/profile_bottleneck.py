@@ -301,12 +301,12 @@ def run_scaling_benchmark(
 
     # Scaling factors
     if len(results) >= 2:
+        base = results[0]
+
         print("\n" + "=" * 120)
         print(f"SCALING FACTORS (relative to first run: {base['num_sources']:,} sources)")
         print("=" * 120)
         print()
-
-        base = results[0]
         header = (f"{'Scale':<8} {'Sources':<12} {'nnz_ratio':<12} {'objective':<12} {'dense_ops':<12} "
                   f"{'projection':<12} {'grad_step':<12} {'momentum':<12} {'iter_total':<12}")
         print(header)
