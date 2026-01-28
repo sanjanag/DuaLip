@@ -59,6 +59,18 @@ if __name__ == "__main__":
     dtype_str = args.dtype
     output_file = os.path.join(args.base_dir, f"memory_testing_results_{dtype_str}.csv")
 
+    # Load existing results to skip already completed experiments
+    completed_experiments = set()
+    if os.path.exists(output_file):
+        print(f"Loading existing results from {output_file}...")
+        with open(output_file, "r") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                num_sources = int(row["num_sources"])
+                num_compute_devices = int(row["num_compute_devices"])
+                completed_experiments.add((num_sources, num_compute_devices))
+        print(f"Found {len(completed_experiments)} completed experiments")
+
     print("\n" + "=" * 70)
     print(f"MEMORY TESTING: {BASE_NUM_SOURCES:,} base sources, {dtype_str}, {args.max_iter} max_iter")
     print("5 iters x 4 devices")
@@ -68,11 +80,18 @@ if __name__ == "__main__":
     # Track stats
     total_runs = 0
     success_count = 0
+    skipped_count = 0
 
     for i in range(1, 6):
         num_sources = BASE_NUM_SOURCES * i
         print(f"\n[Iteration {i}/5] Testing {num_sources:,} sources")
         for num_compute_devices in [1, 2, 3, 4]:
+            # Check if this experiment has already been completed
+            if (num_sources, num_compute_devices) in completed_experiments:
+                skipped_count += 1
+                print(f"  [SKIP] dev={num_compute_devices}, sources={num_sources:,} (already completed)")
+                continue
+
             total_runs += 1
             print(f"  [{total_runs}/20] dev={num_compute_devices}...", end=" ", flush=True)
             try:
@@ -99,6 +118,7 @@ if __name__ == "__main__":
                 result_metrics["dtype"] = dtype_str
 
                 # Save to CSV immediately after execution
+                file_exists = os.path.exists(output_file) and os.path.getsize(output_file) > 0
                 with open(output_file, "a", newline="") as f:
                     writer = csv.DictWriter(
                         f,
@@ -115,7 +135,7 @@ if __name__ == "__main__":
                             "dual_objective_file",
                         ],
                     )
-                    if i == 1 and num_compute_devices == 1:
+                    if not file_exists:
                         writer.writeheader()
                     writer.writerow(result_metrics)
 
@@ -132,6 +152,6 @@ if __name__ == "__main__":
     # Summary
     elapsed = time.time() - start_time
     print(f"\n{'=' * 70}")
-    print(f"COMPLETE: {success_count}/{total_runs} successful ({elapsed/60:.1f} min)")
+    print(f"COMPLETE: {success_count}/{total_runs} successful, {skipped_count} skipped ({elapsed/60:.1f} min)")
     print(f"Results: {output_file}")
     print("=" * 70 + "\n")
