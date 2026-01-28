@@ -60,7 +60,9 @@ def profile_projection_breakdown(objective, dual_val, num_runs=50):
     end_events = {key: [torch.cuda.Event(enable_timing=True) for _ in range(num_runs)]
                   for key in operation_names}
 
-    # Timed runs
+    # Timed runs - we need to time the ENTIRE projection operation as one block
+    # because trying to time individual sub-operations across multiple bucket
+    # iterations causes event accumulation issues
     for run_idx in range(num_runs):
         # Setup: left_multiply + add_c (needed to get to projection)
         start_events['setup_intermediate'][run_idx].record()
@@ -69,7 +71,7 @@ def profile_projection_breakdown(objective, dual_val, num_runs=50):
         elementwise_csc(objective.intermediate, objective.c_rescaled, add, output_tensor=objective.intermediate)
         end_events['setup_intermediate'][run_idx].record()
 
-        # Now profile projection in detail
+        # Time the COMPLETE projection operation
         start_events['total_projection'][run_idx].record()
 
         # Get sparse matrix data
@@ -79,7 +81,8 @@ def profile_projection_breakdown(objective, dual_val, num_runs=50):
         vals = M.values()
         new_vals = torch.empty_like(vals)
 
-        # Process each bucket
+        # For detailed breakdown, we'll do a second pass with timing per bucket
+        # First, just run the full projection normally
         for _, proj_item in objective.buckets.items():
             buckets = proj_item[0]
             proj_type = proj_item[1]
@@ -91,20 +94,16 @@ def profile_projection_breakdown(objective, dual_val, num_runs=50):
                 if K == 0:
                     continue
 
-                # ========== BUCKET METADATA ==========
-                start_events['bucket_metadata'][run_idx].record()
                 starts = ccol[cols].to(device)
                 ends = ccol[cols + 1].to(device)
                 lengths = ends - starts
                 total = int(lengths.sum().item())
 
                 if total == 0:
-                    end_events['bucket_metadata'][run_idx].record()
                     continue
 
                 L = int(lengths.max().item())
 
-                # Compute indices
                 prefix = torch.cat([
                     torch.tensor([0], device=device, dtype=lengths.dtype),
                     torch.cumsum(lengths[:-1], dim=0),
@@ -114,38 +113,130 @@ def profile_projection_breakdown(objective, dual_val, num_runs=50):
                 offs = starts.repeat_interleave(lengths)
                 flat_indices = offs + idx_in_col
                 cols_rep = torch.arange(K, device=device).repeat_interleave(lengths)
-                end_events['bucket_metadata'][run_idx].record()
 
-                # ========== ALLOCATE DENSE BLOCK ==========
-                start_events['allocate_dense'][run_idx].record()
                 block = torch.zeros((L, K), device=device, dtype=vals.dtype)
-                end_events['allocate_dense'][run_idx].record()
-
-                # ========== SPARSE → DENSE (GATHER) ==========
-                start_events['sparse_to_dense'][run_idx].record()
                 block[idx_in_col, cols_rep] = vals[flat_indices]
-                end_events['sparse_to_dense'][run_idx].record()
-
-                # ========== SIMPLEX PROJECTION MATH ==========
-                start_events['simplex_math'][run_idx].record()
                 proj_block = fn(block)
-                end_events['simplex_math'][run_idx].record()
-
-                # ========== DENSE → SPARSE (SCATTER) ==========
-                start_events['dense_to_sparse'][run_idx].record()
                 new_vals[flat_indices] = proj_block[idx_in_col, cols_rep]
-                end_events['dense_to_sparse'][run_idx].record()
 
         end_events['total_projection'][run_idx].record()
 
-    # Synchronize and collect timing
+    # Now do a SINGLE detailed pass to measure sub-operations
+    # We'll time one representative run with fine-grained events
+    print("  Performing detailed sub-operation timing...")
+
+    # Warmup for detailed pass
+    for _ in range(5):
+        _ = objective.calculate(dual_val=dual_val, gamma=objective.gamma)
+
+    torch.cuda.synchronize(device)
+
+    # Create separate events for detailed breakdown (single run)
+    detail_start = {key: torch.cuda.Event(enable_timing=True)
+                    for key in ['bucket_metadata', 'allocate_dense', 'sparse_to_dense',
+                               'simplex_math', 'dense_to_sparse']}
+    detail_end = {key: torch.cuda.Event(enable_timing=True)
+                  for key in ['bucket_metadata', 'allocate_dense', 'sparse_to_dense',
+                             'simplex_math', 'dense_to_sparse']}
+
+    # Do detailed timing on ONE complete projection pass
+    scaled = -1.0 / objective.gamma * dual_val
+    left_multiply_sparse(scaled, objective.A, output_tensor=objective.intermediate)
+    elementwise_csc(objective.intermediate, objective.c_rescaled, add, output_tensor=objective.intermediate)
+
+    M = objective.intermediate
+    ccol = M.ccol_indices()
+    rowi = M.row_indices()
+    vals = M.values()
+    new_vals = torch.empty_like(vals)
+
+    # Accumulate times across all buckets
+    accumulated_times = {k: 0.0 for k in detail_start.keys()}
+
+    for _, proj_item in objective.buckets.items():
+        buckets = proj_item[0]
+        proj_type = proj_item[1]
+        proj_params = proj_item[2]
+        fn = project(proj_type, **proj_params)
+
+        for cols in buckets:
+            K = cols.numel()
+            if K == 0:
+                continue
+
+            # Time bucket metadata
+            detail_start['bucket_metadata'].record()
+            starts = ccol[cols].to(device)
+            ends = ccol[cols + 1].to(device)
+            lengths = ends - starts
+            total = int(lengths.sum().item())
+
+            if total == 0:
+                detail_end['bucket_metadata'].record()
+                torch.cuda.synchronize(device)
+                accumulated_times['bucket_metadata'] += detail_start['bucket_metadata'].elapsed_time(detail_end['bucket_metadata'])
+                continue
+
+            L = int(lengths.max().item())
+            prefix = torch.cat([
+                torch.tensor([0], device=device, dtype=lengths.dtype),
+                torch.cumsum(lengths[:-1], dim=0),
+            ])
+            prefix_rep = prefix.repeat_interleave(lengths)
+            idx_in_col = torch.arange(total, device=device) - prefix_rep
+            offs = starts.repeat_interleave(lengths)
+            flat_indices = offs + idx_in_col
+            cols_rep = torch.arange(K, device=device).repeat_interleave(lengths)
+            detail_end['bucket_metadata'].record()
+            torch.cuda.synchronize(device)
+            accumulated_times['bucket_metadata'] += detail_start['bucket_metadata'].elapsed_time(detail_end['bucket_metadata'])
+
+            # Time allocation
+            detail_start['allocate_dense'].record()
+            block = torch.zeros((L, K), device=device, dtype=vals.dtype)
+            detail_end['allocate_dense'].record()
+            torch.cuda.synchronize(device)
+            accumulated_times['allocate_dense'] += detail_start['allocate_dense'].elapsed_time(detail_end['allocate_dense'])
+
+            # Time gather
+            detail_start['sparse_to_dense'].record()
+            block[idx_in_col, cols_rep] = vals[flat_indices]
+            detail_end['sparse_to_dense'].record()
+            torch.cuda.synchronize(device)
+            accumulated_times['sparse_to_dense'] += detail_start['sparse_to_dense'].elapsed_time(detail_end['sparse_to_dense'])
+
+            # Time simplex
+            detail_start['simplex_math'].record()
+            proj_block = fn(block)
+            detail_end['simplex_math'].record()
+            torch.cuda.synchronize(device)
+            accumulated_times['simplex_math'] += detail_start['simplex_math'].elapsed_time(detail_end['simplex_math'])
+
+            # Time scatter
+            detail_start['dense_to_sparse'].record()
+            new_vals[flat_indices] = proj_block[idx_in_col, cols_rep]
+            detail_end['dense_to_sparse'].record()
+            torch.cuda.synchronize(device)
+            accumulated_times['dense_to_sparse'] += detail_start['dense_to_sparse'].elapsed_time(detail_end['dense_to_sparse'])
+
+    # Collect timing results
     torch.cuda.synchronize(device)
 
     times = {}
-    for key in operation_names:
-        elapsed_times = [start_events[key][i].elapsed_time(end_events[key][i])
-                        for i in range(num_runs)]
-        times[key] = sum(elapsed_times) / len(elapsed_times)
+
+    # Total projection time (averaged over num_runs)
+    elapsed_times = [start_events['total_projection'][i].elapsed_time(end_events['total_projection'][i])
+                    for i in range(num_runs)]
+    times['total_projection'] = sum(elapsed_times) / len(elapsed_times)
+
+    # Setup time (averaged over num_runs)
+    elapsed_times = [start_events['setup_intermediate'][i].elapsed_time(end_events['setup_intermediate'][i])
+                    for i in range(num_runs)]
+    times['setup_intermediate'] = sum(elapsed_times) / len(elapsed_times)
+
+    # Detailed breakdown times (from single accumulated run)
+    for key in ['bucket_metadata', 'allocate_dense', 'sparse_to_dense', 'simplex_math', 'dense_to_sparse']:
+        times[key] = accumulated_times[key]
 
     return times
 
