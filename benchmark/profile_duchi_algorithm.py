@@ -76,14 +76,39 @@ def profile_duchi_breakdown(objective, dual_val, num_runs=50):
             fn = SimplexIneq(z=z, method='duchi')
 
             for cols in buckets:
-                if len(cols) == 0:
+                K = cols.numel()
+                if K == 0:
                     continue
 
                 total_bucket_count += 1
 
-                # Extract the columns (this is what apply_F_to_columns does internally)
-                cols_tensor = torch.tensor(cols, dtype=torch.long, device=device)
-                block = objective.intermediate.index_select(1, cols_tensor).to_dense()
+                # Extract the columns using CSC sparse utilities (from apply_F_to_columns)
+                ccol = objective.intermediate.ccol_indices()
+                vals = objective.intermediate.values()
+
+                starts = ccol[cols].to(device)
+                ends = ccol[cols + 1].to(device)
+                lengths = ends - starts
+
+                total = int(lengths.sum().item())
+                if total == 0:
+                    continue
+
+                L = int(lengths.max().item())
+
+                # Build padded [L × K] block
+                prefix = torch.cat([
+                    torch.tensor([0], device=device, dtype=lengths.dtype),
+                    torch.cumsum(lengths[:-1], dim=0),
+                ])
+                prefix_rep = prefix.repeat_interleave(lengths)
+                idx_in_col = torch.arange(total, device=device) - prefix_rep
+                offs = starts.repeat_interleave(lengths)
+                flat_indices = offs + idx_in_col
+
+                block = torch.zeros((L, K), device=device, dtype=vals.dtype)
+                cols_rep = torch.arange(K, device=device).repeat_interleave(lengths)
+                block[idx_in_col, cols_rep] = vals[flat_indices]
 
                 L, B = block.shape
                 tol = 1e-6
