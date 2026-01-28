@@ -18,8 +18,8 @@ import torch
 from generate_synthetic_data import generate_synthetic_matching_input_args
 
 from dualip.objectives.matching import MatchingSolverDualObjectiveFunction
+from dualip.optimizers.agd import project_on_nn_cone
 from dualip.optimizers.agd_utils import calculate_step_size
-from dualip.projections.cone import project_on_nn_cone
 
 
 def profile_full_agd_iteration(objective, dual_val, beta, num_runs=50):
