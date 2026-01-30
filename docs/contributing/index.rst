@@ -1,10 +1,11 @@
-.. _contribution :
+.. _contribution:
 
 Contributing
 =============
 
-Agreement
-----------
+.. container:: custom-title
+
+   Agreement
 
 As a contributor, you represent that the code you submit is your
 original work or that of your employer (in which case you represent
@@ -13,15 +14,17 @@ you have the right to bind your employer).  By submitting code, you
 to LinkedIn and the open source community subject to the BSD 2-Clause
 license.
 
-Mailing Lists
--------------
+.. container:: custom-title
 
-If you want to get in touch regarding this project or have successful
-of applications of DuaLip, we would love to hear from you. Please send us an email
-at `ask_lp@linkedin.com <mailto:ask_lp@linkedin.com>`_.
+   Tips for Getting Your Pull Request Accepted
 
-Responsible Disclosure of Security Vulnerabilities
---------------------------------------------------
+#. Make sure all new features are tested and the tests pass.
+#. Bug fixes must include a test case demonstrating the error that it fixes.
+#. Open an issue first and seek advice for your change before submitting a pull request. Large features which have never been discussed are unlikely to be accepted. 
+
+.. container:: custom-title
+
+   Responsible Disclosure of Security Vulnerabilities
 
 **Do not file an issue on Github for security issues.**  Please review
 the `guidelines for disclosure
@@ -32,9 +35,9 @@ be encrypted using PGP `public key
 preferably with the title
 "Vulnerability in Github LinkedIn/DuaLip - <short summary>".
 
-Tips for Getting Your Pull Request Accepted
--------------------------------------------
+.. container:: custom-title
 
-#. Make sure all new features are tested and the tests pass.
-#. Bug fixes must include a test case demonstrating the error that it fixes.
-#. Open an issue first and seek advice for your change before submitting a pull request. Large features which have never been discussed are unlikely to be accepted. 
+   Contact Us
+
+If you want to get in touch regarding this project or have successful
+of applications of DuaLip, we would love to hear from you. Please send the project contributors an email. 

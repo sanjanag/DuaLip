@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dualip"
+version = "5.0.0"
+description = "Extreme-scale linear programming with a first-order projected dual-ascent solver and a modular API for problem-specific components."
+readme = { file = "README.md", content-type = "text/markdown" }
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+  "torch>=2.6.0",
+  "mlflow"
+]
+
+[project.optional-dependencies]
+dev = [
+  "flake8",
+  "black",
+  "isort",
+  "pytest",
+  "pre-commit",
+]
+
+[project.urls]
+Repository = "https://github.com/linkedin/DuaLip"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["dualip*"]
+
+[tool.pytest.ini_options]
+# Keep src layout honest; no pythonpath hacks.
+testpaths = ["tests"]
+addopts = ["-ra"]
+log_cli = true
+log_cli_level = "INFO"
+
+[tool.black]
+line-length = 120
+
+[tool.isort]
+profile = "black"
+line_length = 120
+
+[tool.flake8]
+max-line-length = 120
+extend-ignore = ["E203","W503"]  # matches Black
+exclude = [".git", "__pycache__"]

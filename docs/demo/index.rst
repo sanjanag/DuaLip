@@ -1,18 +1,18 @@
 Demo
 =================
 
-Through the following examples, we show detailed demos on how to use this solver. We showcase two common use cases by
-focusing on two example problems. For each problem, we answer the following questions:
+Through the following examples, we show detailed demos on how to use this solver in two instances of the matching problem.   
+For each problem, we answer the following questions:
 
-#. How to translate the problem mathematically to get :math:`A,b,c` and :math:`\mathcal{C}_i`.
-#. How to formulate the training data.
+#. How to construct the input tensors and projection maps for the solver.
 #. How to execute the solver.
-#. How to read the results and do inference.
+#. How to interpret the results and do inference.
+#. How to define a new objective class for new applications. 
 
 The two specific examples are:
 
 .. toctree::
    :maxdepth: 1
 
-   moo
    matching
+   matching_complex

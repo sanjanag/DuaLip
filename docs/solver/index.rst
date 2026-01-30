@@ -1,4 +1,4 @@
-.. _solver :
+.. _solver:
 
 The DuaLip Solver
 =================
@@ -23,7 +23,7 @@ DuaLip solves Linear Programs (LPs) of the following form:
 where :math:`A_{m \times n}` is the constraint matrix, :math:`b_{m \times 1}` is the constraint vector and :math:`\mathcal{C}_i` are uniformly
 compact polytopes. :math:`x \in \mathbb{R}^n` is the vector of optimization variables, where :math:`n = IK`. 
 
-.. _probsolution :
+.. _probsolution:
 
 Problem Solution
 ----------------
@@ -72,7 +72,7 @@ For more details, please refer to `Basu et al. (2020)
 <http://proceedings.mlr.press/v119/basu20a/basu20a.pdf>`_.
 
 
-.. _algorithm :
+.. _algorithm:
 
 The Algorithm
 -------------
@@ -85,26 +85,22 @@ The overall algorithm can now be written as:
 4. Update :math:`\lambda` via appropriate mechanisms.
 5. Continue till converge.
    
-We currently support three different mechanisms for doing this first-order optimization. Specifically, `Proximal Gradient Ascent
-<https://en.wikipedia.org/wiki/Proximal_gradient_method>`_, `Accelerated Gradient Ascent
-<https://www.ceremade.dauphine.fr/~carlier/FISTA>`_, and `LBFGS-B
-<https://en.wikipedia.org/wiki/Limited-memory_BFGS>`_. For the details please see Appendix A of `Ramanath et al. (2021)
-<https://arxiv.org/abs/2103.05277>`_.
+We currently support `Accelerated Gradient Ascent <https://www.ceremade.dauphine.fr/~carlier/FISTA>`_ as the maximizer though the solver is easily extensible to other optimization algorithms.
 
-.. _constraints :
+.. _constraints:
 
 Constraint Sets :math:`\mathcal{C}_i`
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+-------------------------------------
 In this current version of the solver we support a wide variety of constraints types :math:`\mathcal{C}_i`, 
 such as:
 
 1. Unit Box: :math:`\mathcal{C}_i = \big\{ x \in \mathbb{R}^K : 0 \leq x_k \leq 1\big\}`
 2. Simplex-E: :math:`\mathcal{C}_i = \big\{ x \in \mathbb{R}^K : x_1 + ... + x_K = 1, \;\; x_k \geq 0\big\}`
 3. Simplex-I: :math:`\mathcal{C}_i = \big\{ x \in \mathbb{R}^K : x_1 + ... + x_K \leq 1, \;\; x_k \geq 0\big\}`
-4. Box Cut-E: :math:`\mathcal{C}_i = \big\{ x \in \mathbb{R}^K : x_1 + ... + x_K = d, \;\; 0 \leq x_k \leq 1\big\}`
-5. Box Cut-I: :math:`\mathcal{C}_i = \big\{ x \in \mathbb{R}^K : x_1 + ... + x_K \leq d, \;\; 0 \leq x_k \leq 1\big\}`
+4. r-Simplex-E: :math:`\mathcal{C}_i = \big\{ x \in \mathbb{R}^K : x_1 + ... + x_K = r, \;\; x_k \geq 0\big\}`
+5. r-Simplex-I: :math:`\mathcal{C}_i = \big\{ x \in \mathbb{R}^K : x_1 + ... + x_K \leq r, \;\; x_k \geq 0\big\}`
 
-Here :math:`E` and :math:`I` stands for equality and inequality. Also note that choosing :math:`d=1` the Box Cut reduces to the Simplex case. 
+Here :math:`E` and :math:`I` stands for equality and inequality.
 
 
 To execute step 2 of the overall algorithm, we need a projection operation on these constraint sets.
@@ -113,57 +109,26 @@ different customized algorithms to make the overall system highly efficient. For
 these projection algorithms please see Section 3 of `Ramanath et al. (2021)
 <https://arxiv.org/abs/2103.05277>`_.
 
-.. _adaptive_smoothing :
 
-Adaptive Smoothing Algorithm
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-The smoothness of :math:`g_\gamma` decreases as the number of constraints increases. 
-A small :math:`\gamma` makes the optimizer's convergence prohibitively slow, while a large :math:`\gamma` reduces the accuracy of 
-the solution. We define a practical criterion for sufficient convergence for a given :math:`\gamma` and 
-implement a stage-wise algorithm that automatically reduces :math:`\gamma` when the criterion is met to 
-prefer more accurate solutions. For details, please see Section 3 of `Basu et al. (2020) <http://proceedings.mlr.press/v119/basu20a/basu20a.pdf>`_.
+.. .. _adaptive_smoothing:
 
-.. _convergence :
-
-Stopping Criteria
-^^^^^^^^^^^^^^^^^
-
-Let :math:`\lambda_\gamma = \arg \max_{\lambda\ge 0} g_\gamma(\lambda)` and
-:math:`\tilde{\lambda}_\gamma` be an approximate solution after the optimizer has made sufficient progress to maximize :math:`g_\gamma`.
-If the approximation error :math:`(g_0(\lambda_0) - g_0(\tilde{\lambda}_\gamma))` is :math:`\epsilon` times smaller than the
-total opportunity :math:`(g_0(\lambda_0) - g_0(0))` then we declare sufficient convergence, i.e.,
-
-.. math::
-    g_0(\lambda_0) - g_0(\tilde{\lambda}_\gamma) \le \epsilon \; (g_0(\lambda_0) - g_0(0)).
-
-The intuition behind this is as follows:
-
-#. The criterion is defined in terms of :math:`g_0` because it is the Lagrangian dual corresponding to the actual LP we want to solve and by strong duality, :math:`g_0(\lambda_0)` is the optimal primal objective that can be attained.
-#. Since :math:`\lambda=0` removes the effect of constraints on the Lagrangian, :math:`g_0(0)` represents the maximum value of the primal objective. The total opportunity represents the value of objective "lost" to enforce the constraints :math:`Ax \le b`.
-#. The approximation error (the left hand side of above) is due to two levels of approximation: (a) the error due to working with :math:`\gamma >0`, i.e., the difference between :math:`\lambda_0` and :math:`\lambda_\gamma`; and (b) the approximate solution of :math:`\max_\lambda g_\gamma(\lambda)`, i.e., the difference between :math:`\lambda_\gamma` and :math:`\tilde{\lambda}_\gamma`.
+.. Adaptive Smoothing
+.. ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. The smoothness of :math:`g_\gamma` decreases as the number of constraints increases. 
+.. A small :math:`\gamma` makes the optimizer's convergence prohibitively slow, while a large :math:`\gamma` reduces the accuracy of 
+.. the solution. The solver allows for a basic adaptive smoothing where the :math:`\gamma` is reduced by a under-defined factor at specified intervals.
 
 
+Data Sharding (Multi-GPU)
+-------------------------------------
 
-Infeasible problems
+For large matching problems, DuaLip can distribute computation across multiple GPUs by sharding the input data along the column dimension of the constraint matrix. When ``compute_device_num > 1``, the solver builds a distributed objective that wraps a single‑GPU objective on each device and coordinates reductions on a host device.
+
+- Sharding of inputs: Matrices ``A`` and ``c`` are partitioned into roughly equal contiguous blocks across the available compute devices (e.g., ``cuda:0``, ``cuda:1``, ...). This balances work by splitting the number of columns as evenly as possible. Each shard is then moved to its target device. The per‑device projection map is derived from the global projection map by remapping global column indices to local indices for that shard. Only projections that touch columns present on the device are kept.
+- Per‑iteration execution: The current dual vector :math:`\lambda` is transferred to each compute device. Each device computes its local dual gradient contribution, local dual objective component, and regularization penalty using the single‑GPU matching objective on its shard. Partial results are first accumulated on the host device, then synchronized and summed across processes using NCCL all‑reduce. The final distributed gradient subtracts :math:`b` and is used by the optimizer exactly as in the single‑GPU case.
+
+This design keeps projection logic local to each shard, minimizes inter‑GPU communication to a small number of vector/tensor reductions per iteration, and scales naturally with the number of GPUs. 
+
+Implementation Note
 -------------------
-
-DuaLip is able to detect if the problem is primal infeasible. If the primal problem is infeasible,
-
-.. math::
-    g_\gamma^* = \max_{\lambda\ge 0} g_\gamma(\lambda) = \infty.
-
-Furthermore, for any feasible :math:`x`, by weak duality, we have
-
-.. math::
-    g_\gamma^* & \leq \max_{x \in \mathcal{C} \; \text{and} \; x: Ax \leq b} ( c^T x + \frac{\gamma}{2} x^T x) \leq \max_{x \in \mathcal{C}} ( c^T x + \frac{\gamma}{2} x^T x) \\
-    & = \sum_{i = 1}^I \max_{x_i\in\mathcal{C}_i} \; ({c_i}^T x_i + \frac{\gamma}{2} {x_i}^T x_i)
-
-where the second inequality follows from the fact that the max is taken over a larger set. Now, for each constraint type :math:`\mathcal{C}_i`, it is easy to calculate a bound :math:`B` such that
-
-.. math::
-    \max_{x_i\in\mathcal{C}_i} \; ({c_i}^T x_i + \frac{\gamma}{2} {x_i}^T x_i) \leq B. 
-
-If the primal is feasible, then strong optimality implies that :math:`{g_\gamma}^* \le IB`.
-Thus, if, during the optimization, :math:`g_\gamma > IB`, then it guarantees that the primal is infeasible.
-
-
+As we will discuss in the :ref:`Supported LPs <supported_lps>` section, currently the distributed objective is implemented for matching problems where the constraint matrix is a block-diagonal matrix. In this case, the inputs must be CSC‑format sparse tensors. Sharding operates on columns to align with how projections are applied per column group. For custom objective functions, the user needs to implement the parallelism themselves.

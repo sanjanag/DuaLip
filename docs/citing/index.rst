@@ -1,4 +1,4 @@
-.. _citing :
+.. _citing:
 
 Citing DuaLip
 =============

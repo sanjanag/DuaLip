@@ -1,126 +1,23 @@
 Input Format
 ----------------
+Users are expected to provide the tensors :math:`A`, :math:`b`, and :math:`C` defining the LP formulation to the solver. In the matching problem implementation, both :math:`A` and :math:`C` are assumed to be stored as CSC sparse matrices for memory efficiency.
+See `here <https://docs.pytorch.org/docs/stable/generated/torch.sparse_csc_tensor.html>`_ for details on the CSC format in PyTorch.
+The vector :math:`b`, however, is represented as a dense vector.
 
-Users are expected to provide the A, b, and c of the LP formulation to the solver. The solver takes input in the following format:
+The CSC sparse format exploits both structured (e.g., block-diagonal or triangular) and unstructured sparsity patterns in the :math:`A` and :math:`C` matrices, significantly reducing memory footprint and improving computational efficiency at scale.
 
-Vector b
-""""""""""""
-For vector b, the input should contain the budget for each item. The representation needs to be dense: every item needs to have a budget.
-For input in AVRO, the schema should be as follows:
+In addition, users must specify the constraint sets :math:`\mathcal{C}_i` for each user in the form of **projection maps**. Projection maps are dictionaries that associate a unique constraint identifier (key) with a data structure describing the indices belonging to that constraint set, along with the parameters defining the constraint :math:`\mathcal{C}_i`.
 
-.. code:: json
+For example, a projection map for a closed simplex constraint may be defined as follows:
 
-	{
-	   "name" : "itemId",
-	   "type" : "int"
-	 }, {
-	   "name" : "budget",
-	   "type" : "double"
-	 }
+.. code-block:: python
 
-If we are using the parallel version of DuaLip and solving many separate problems in parallel, we need to add a new field :code:`problemId` 
-(unique identifier for distinguishing a specific problem) to the schema:
+   {
+       "simplex_with_radius_one": ProjectionEntry(
+           indices=[0, 1, 2],
+           proj_type="simplex",
+           proj_params=1.0  # radius of the simplex
+       )
+   }
 
-.. code:: json
-
-	{
-	   "name" : "itemId",
-	   "type" : "int"
-	 }, {
-	   "name" : "budget",
-	   "type" : "double"
-	 }, {
-	   "name" : "problemId",
-	   "type" : "long"
-	 }
-
-Matrix A & c
-"""""""""""""""
-If it is a MOO problem, we take a dense representation.
-
-* id is a unique identifier of the block.
-* a contains the dense constraints matrix A(row)(column).
-* c contains a dense objective function vector.
-
-For input in AVRO, the schema should be as follows:
-
-.. code:: json
-
-	{
-	    "name" : "id",
-	    "type" : [ "long" ]
-	  }, {
-	    "name" : "a",
-	    "type" : [ {
-	      "type" : "array",
-	      "items" : [ {
-	        "type" : "array",
-	        "items" : [ "double"]
-	      }]
-	    }]
-	  }, {
-	    "name" : "c",
-	    "type" : [ {
-	      "type" : "array",
-	      "items" : "double"
-	    }]
-	  }
-
-If we are using the parallel version of :code:`MooSolver`, we also need to add a new field :code:`problemId` (unique identifier for 
-distinguishing a specific problem) to the schema:
-
-.. code:: json
-
-	{
-	    "name" : "id",
-	    "type" : [ "long" ]
-	  }, {
-	    "name" : "a",
-	    "type" : [ {
-	      "type" : "array",
-	      "items" : [ {
-	        "type" : "array",
-	        "items" : [ "double"]
-	      }]
-	    }]
-	  }, {
-	    "name" : "c",
-	    "type" : [ {
-	      "type" : "array",
-	      "items" : "double"
-	    }, {
-	    "name" : "problemId",
-	    "type" : [ "long" ]
-	    }]
-	  }
-
-If it is a Matching problem, we take a sparse representation. We keep the items in A and c which belong to same block together, to facilitate projection.
-
-id is a unique identifier of the block, i.e. impression id for some problems. Each id corresponds to an array of tuples, which is in the format of
-(rowId, c(rowId), a(rowId)).
-
-.. code:: json
-
-	{
-	    "name" : "id",
-	    "type" : [ "string" ]
-	  }, {
-	    "name" : "data",
-	    "type" : [ {
-	      "type" : "array",
-	      "items" : [ {
-	        "type" : "record",
-	        "name" : "data",
-	        "fields" : [ {
-	          "name" : "rowId",
-	          "type" : "int"
-	        }, {
-	          "name" : "c",
-	          "type" : "double"
-	        }, {
-	          "name" : "a",
-	          "type" : "double"
-	        } ]
-	      } ]
-	    } ]
-	  }
+See :ref:`The DuaLip Solver <solver>` section for a complete list of supported constraint sets.
