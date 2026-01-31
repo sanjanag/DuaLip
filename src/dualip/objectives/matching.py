@@ -250,12 +250,13 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         dual_objs_per_dev = []
         regs_per_dev = []
 
-        # Record absolute start/end times for each device relative to a global reference
-        global_start = torch.cuda.Event(enable_timing=True)
-        global_start.record()  # Record on default stream as reference point
-
+        # Record timing for each device
         start_events = []
         end_events = []
+
+        # Record wall-clock start time
+        import time
+        wall_start = time.perf_counter()
 
         for solver, dev, dv in zip(self.objectives, self.compute_devices, dv_per_dev):
             stream = self.streams[dev]
@@ -278,32 +279,44 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         for dev in self.compute_devices:
             self.streams[dev].synchronize()
 
-        # Measure absolute times from global reference
+        # Measure wall-clock end time
+        wall_end = time.perf_counter()
+        wall_time = (wall_end - wall_start) * 1000  # Convert to ms
+
+        # Measure GPU execution time on each device
         print("\n=== Stream Timing Analysis ===")
+        durations = []
         for i, (start, end) in enumerate(zip(start_events, end_events)):
-            start_time = global_start.elapsed_time(start)
-            end_time = global_start.elapsed_time(end)
             duration = start.elapsed_time(end)
-            print(f"Device {i}: starts at {start_time:.2f}ms, ends at {end_time:.2f}ms, duration {duration:.2f}ms")
+            durations.append(duration)
+            print(f"Device {i}: {duration:.2f}ms")
 
-        # Check for overlap
-        if len(start_events) >= 2:
-            dev0_start = global_start.elapsed_time(start_events[0])
-            dev0_end = global_start.elapsed_time(end_events[0])
-            dev1_start = global_start.elapsed_time(start_events[1])
-            dev1_end = global_start.elapsed_time(end_events[1])
+        # Analyze parallelism
+        print(f"\n=== Parallelism Analysis ===")
+        print(f"Wall-clock time: {wall_time:.2f}ms")
+        total_gpu_time = sum(durations)
+        max_gpu_time = max(durations)
+        print(f"Total GPU time: {total_gpu_time:.2f}ms (sum of all devices)")
+        print(f"Max GPU time: {max_gpu_time:.2f}ms (longest device)")
 
-            print(f"\n=== Overlap Analysis ===")
-            print(f"Device 0: {dev0_start:.2f}ms -> {dev0_end:.2f}ms")
-            print(f"Device 1: {dev1_start:.2f}ms -> {dev1_end:.2f}ms")
+        parallelism_ratio = total_gpu_time / max_gpu_time if max_gpu_time > 0 else 0
+        print(f"Parallelism ratio: {parallelism_ratio:.2f}x (ideal={len(durations)}x)")
 
-            if dev1_start < dev0_end:
-                overlap = dev0_end - dev1_start
-                print(f"✓ PARALLEL: Device 1 starts {dev0_end - dev1_start:.2f}ms before Device 0 finishes")
-                print(f"  Overlap: {overlap:.2f}ms")
-            else:
-                gap = dev1_start - dev0_end
-                print(f"✗ SEQUENTIAL: Device 1 starts {gap:.2f}ms AFTER Device 0 finishes")
+        # Check if parallel or sequential
+        if parallelism_ratio >= len(durations) * 0.8:  # Within 80% of ideal
+            print(f"✓ PARALLEL: Good parallelism detected")
+        elif parallelism_ratio > 1.2:
+            print(f"⚠ PARTIAL: Some parallelism but imbalanced or contention")
+        else:
+            print(f"✗ SEQUENTIAL: Poor parallelism, likely running sequentially")
+
+        # Additional check: wall time should be close to max GPU time if parallel
+        wall_vs_max = wall_time / max_gpu_time if max_gpu_time > 0 else 0
+        print(f"Wall-time / Max-GPU-time ratio: {wall_vs_max:.2f}x")
+        if wall_vs_max < 1.3:
+            print(f"✓ Wall-clock time confirms parallel execution")
+        else:
+            print(f"⚠ Wall-clock overhead detected (could be launch overhead or sync issues)")
         print("="*40)
 
         total_grad = cuda_comm.reduce_add(grads_per_dev, destination=self.host_device.index)
