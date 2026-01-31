@@ -250,18 +250,61 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         dual_objs_per_dev = []
         regs_per_dev = []
 
+        # Record absolute start/end times for each device relative to a global reference
+        global_start = torch.cuda.Event(enable_timing=True)
+        global_start.record()  # Record on default stream as reference point
+
+        start_events = []
+        end_events = []
+
         for solver, dev, dv in zip(self.objectives, self.compute_devices, dv_per_dev):
             stream = self.streams[dev]
             with torch.cuda.device(dev), torch.cuda.stream(stream):
+                start = torch.cuda.Event(enable_timing=True)
+                end = torch.cuda.Event(enable_timing=True)
+                start.record(stream)
 
                 res = solver.calculate(dv, gamma, save_primal=False)
+
+                end.record(stream)
 
                 grads_per_dev.append(res.dual_gradient)
                 dual_objs_per_dev.append(res.dual_objective)
                 regs_per_dev.append(res.reg_penalty)
 
+                start_events.append(start)
+                end_events.append(end)
+
         for dev in self.compute_devices:
             self.streams[dev].synchronize()
+
+        # Measure absolute times from global reference
+        print("\n=== Stream Timing Analysis ===")
+        for i, (start, end) in enumerate(zip(start_events, end_events)):
+            start_time = global_start.elapsed_time(start)
+            end_time = global_start.elapsed_time(end)
+            duration = start.elapsed_time(end)
+            print(f"Device {i}: starts at {start_time:.2f}ms, ends at {end_time:.2f}ms, duration {duration:.2f}ms")
+
+        # Check for overlap
+        if len(start_events) >= 2:
+            dev0_start = global_start.elapsed_time(start_events[0])
+            dev0_end = global_start.elapsed_time(end_events[0])
+            dev1_start = global_start.elapsed_time(start_events[1])
+            dev1_end = global_start.elapsed_time(end_events[1])
+
+            print(f"\n=== Overlap Analysis ===")
+            print(f"Device 0: {dev0_start:.2f}ms -> {dev0_end:.2f}ms")
+            print(f"Device 1: {dev1_start:.2f}ms -> {dev1_end:.2f}ms")
+
+            if dev1_start < dev0_end:
+                overlap = dev0_end - dev1_start
+                print(f"✓ PARALLEL: Device 1 starts {dev0_end - dev1_start:.2f}ms before Device 0 finishes")
+                print(f"  Overlap: {overlap:.2f}ms")
+            else:
+                gap = dev1_start - dev0_end
+                print(f"✗ SEQUENTIAL: Device 1 starts {gap:.2f}ms AFTER Device 0 finishes")
+        print("="*40)
 
         total_grad = cuda_comm.reduce_add(grads_per_dev, destination=self.host_device.index)
 
