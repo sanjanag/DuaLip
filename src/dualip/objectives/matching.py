@@ -250,74 +250,18 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         dual_objs_per_dev = []
         regs_per_dev = []
 
-        # Record timing for each device
-        start_events = []
-        end_events = []
-
-        # Record wall-clock start time
-        import time
-        wall_start = time.perf_counter()
-
         for solver, dev, dv in zip(self.objectives, self.compute_devices, dv_per_dev):
             stream = self.streams[dev]
             with torch.cuda.device(dev), torch.cuda.stream(stream):
-                start = torch.cuda.Event(enable_timing=True)
-                end = torch.cuda.Event(enable_timing=True)
-                start.record(stream)
 
                 res = solver.calculate(dv, gamma, save_primal=False)
-
-                end.record(stream)
 
                 grads_per_dev.append(res.dual_gradient)
                 dual_objs_per_dev.append(res.dual_objective)
                 regs_per_dev.append(res.reg_penalty)
 
-                start_events.append(start)
-                end_events.append(end)
-
         for dev in self.compute_devices:
             self.streams[dev].synchronize()
-
-        # Measure wall-clock end time
-        wall_end = time.perf_counter()
-        wall_time = (wall_end - wall_start) * 1000  # Convert to ms
-
-        # Measure GPU execution time on each device
-        print("\n=== Stream Timing Analysis ===")
-        durations = []
-        for i, (start, end) in enumerate(zip(start_events, end_events)):
-            duration = start.elapsed_time(end)
-            durations.append(duration)
-            print(f"Device {i}: {duration:.2f}ms")
-
-        # Analyze parallelism
-        print(f"\n=== Parallelism Analysis ===")
-        print(f"Wall-clock time: {wall_time:.2f}ms")
-        total_gpu_time = sum(durations)
-        max_gpu_time = max(durations)
-        print(f"Total GPU time: {total_gpu_time:.2f}ms (sum of all devices)")
-        print(f"Max GPU time: {max_gpu_time:.2f}ms (longest device)")
-
-        parallelism_ratio = total_gpu_time / max_gpu_time if max_gpu_time > 0 else 0
-        print(f"Parallelism ratio: {parallelism_ratio:.2f}x (ideal={len(durations)}x)")
-
-        # Check if parallel or sequential
-        if parallelism_ratio >= len(durations) * 0.8:  # Within 80% of ideal
-            print(f"✓ PARALLEL: Good parallelism detected")
-        elif parallelism_ratio > 1.2:
-            print(f"⚠ PARTIAL: Some parallelism but imbalanced or contention")
-        else:
-            print(f"✗ SEQUENTIAL: Poor parallelism, likely running sequentially")
-
-        # Additional check: wall time should be close to max GPU time if parallel
-        wall_vs_max = wall_time / max_gpu_time if max_gpu_time > 0 else 0
-        print(f"Wall-time / Max-GPU-time ratio: {wall_vs_max:.2f}x")
-        if wall_vs_max < 1.3:
-            print(f"✓ Wall-clock time confirms parallel execution")
-        else:
-            print(f"⚠ Wall-clock overhead detected (could be launch overhead or sync issues)")
-        print("="*40)
 
         total_grad = cuda_comm.reduce_add(grads_per_dev, destination=self.host_device.index)
 
