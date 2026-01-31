@@ -249,19 +249,25 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         grads_per_dev = []
         dual_objs_per_dev = []
         regs_per_dev = []
+        res_per_dev = []
 
         for solver, dev, dv in zip(self.objectives, self.compute_devices, dv_per_dev):
             stream = self.streams[dev]
-            with torch.cuda.device(dev), torch.cuda.stream(stream):
+            with torch.cuda.stream(stream):
 
                 res = solver.calculate(dv, gamma, save_primal=False)
+                res_per_dev.append(res)
 
-                grads_per_dev.append(res.dual_gradient)
-                dual_objs_per_dev.append(res.dual_objective)
-                regs_per_dev.append(res.reg_penalty)
+        
+        
 
         for dev in self.compute_devices:
             self.streams[dev].synchronize()
+
+        for res in res_per_dev:
+            grads_per_dev.append(res.dual_gradient)
+            dual_objs_per_dev.append(res.dual_objective)
+            regs_per_dev.append(res.reg_penalty)
 
         total_grad = cuda_comm.reduce_add(grads_per_dev, destination=self.host_device.index)
 
