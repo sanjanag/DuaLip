@@ -15,7 +15,7 @@ def parse_args():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--base_num_sources", type=int, default=25_000_000, help="Base number of sources")
-    parser.add_argument("--num_compute_devices", type=int, default=1, help="Number of compute devices")
+    parser.add_argument("--num_compute_devices", type=int, default=1, help="Max number of compute devices to test (tests 1 to this number)")
     parser.add_argument("--host_device", type=str, default="cuda:0", help="Host device")
     parser.add_argument(
         "--dtype",
@@ -73,7 +73,7 @@ if __name__ == "__main__":
 
     print("\n" + "=" * 70)
     print(f"MEMORY TESTING: {BASE_NUM_SOURCES:,} base sources, {dtype_str}, {args.max_iter} max_iter")
-    print("5 iters x 4 devices")
+    print(f"5 iters x {args.num_compute_devices} devices (1 to {args.num_compute_devices})")
     print(f"Output: {output_file}")
     print("=" * 70 + "\n")
 
@@ -81,11 +81,12 @@ if __name__ == "__main__":
     total_runs = 0
     success_count = 0
     skipped_count = 0
+    expected_total = 5 * args.num_compute_devices  # 5 size iterations x num_devices
 
     for i in range(1, 6):
         num_sources = BASE_NUM_SOURCES * i
         print(f"\n[Iteration {i}/5] Testing {num_sources:,} sources")
-        for num_compute_devices in [1, 2, 3, 4]:
+        for num_compute_devices in range(1, args.num_compute_devices + 1):
             # Check if this experiment has already been completed
             if (num_sources, num_compute_devices) in completed_experiments:
                 skipped_count += 1
@@ -93,7 +94,7 @@ if __name__ == "__main__":
                 continue
 
             total_runs += 1
-            print(f"  [{total_runs}/20] dev={num_compute_devices}...", end=" ", flush=True)
+            print(f"  [{total_runs}/{expected_total}] dev={num_compute_devices}...", end=" ", flush=True)
             try:
                 if num_compute_devices == 1:
                     result_metrics = run_benchmark_single(
