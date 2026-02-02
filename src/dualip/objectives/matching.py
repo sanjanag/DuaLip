@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from operator import add, mul
+import time
 
 import torch
 import torch.cuda.comm as cuda_comm
@@ -251,18 +252,25 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         regs_per_dev = []
         res_per_dev = []
 
+        loop_start = time.perf_counter()
         for solver, dev, dv in zip(self.objectives, self.compute_devices, dv_per_dev):
             stream = self.streams[dev]
+            enqueue_start = time.perf_counter()
             with torch.cuda.stream(stream):
 
                 res = solver.calculate(dv, gamma, save_primal=False)
                 res_per_dev.append(res)
+            enqueue_time = time.perf_counter() - enqueue_start
+            print(f"[Parallelism] Device {dev}: enqueue took {enqueue_time:.6f}s")
 
-        
-        
+        loop_time = time.perf_counter() - loop_start
+        print(f"[Parallelism] Total loop time: {loop_time:.6f}s")
 
+        sync_start = time.perf_counter()
         for dev in self.compute_devices:
             self.streams[dev].synchronize()
+        sync_time = time.perf_counter() - sync_start
+        print(f"[Parallelism] Synchronization time: {sync_time:.6f}s")
 
         for res in res_per_dev:
             grads_per_dev.append(res.dual_gradient)
