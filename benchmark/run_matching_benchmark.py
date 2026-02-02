@@ -207,9 +207,9 @@ def run_benchmark(num_sources, dtype=DTYPE, cache_dir=None, output_dir=None, bas
 
     initial_dual = torch.zeros_like(input_args.b_vec)
 
-    t0 = time.time()
+    t0 = time.perf_counter()
     result = solver.maximize(objective, initial_dual)
-    solve_time = time.time() - t0
+    solve_time = time.perf_counter() - t0
 
     # Results
     avg_iter_time = sum(result.iteration_time_log) / len(result.iteration_time_log)

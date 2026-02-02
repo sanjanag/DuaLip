@@ -143,7 +143,7 @@ class AcceleratedGradientDescent:
 
         i = 1
         while i <= self.max_iter:
-            iter_start_time = time.time()
+            iter_start_time = time.perf_counter()
 
             gamma_params = {"gamma": self.gamma} if self.gamma is not None else {}
 
@@ -194,7 +194,7 @@ class AcceleratedGradientDescent:
             log_objective_result(objective_result, step=i)
 
             # Record iteration time
-            iter_time = time.time() - iter_start_time
+            iter_time = time.perf_counter() - iter_start_time
             iteration_time_log.append(iter_time)
 
             i += 1
