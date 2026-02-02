@@ -134,6 +134,7 @@ def apply_F_to_columns(
     M: torch.Tensor,
     F_batch: Callable[[torch.Tensor, float], torch.Tensor],
     buckets: list[torch.LongTensor],
+    metadata: Optional[list[tuple[int, int]]] = None,
     output_tensor: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
@@ -176,7 +177,10 @@ def apply_F_to_columns(
 
     new_vals = torch.empty_like(vals)
 
-    for cols in buckets:
+    # If metadata is provided, use it; otherwise compute on the fly
+    bucket_iter = enumerate(buckets) if metadata is not None else enumerate(buckets)
+
+    for bucket_idx, cols in bucket_iter:
         K = cols.numel()
         if K == 0:
             continue  # skip empty buckets
@@ -186,17 +190,23 @@ def apply_F_to_columns(
         ends = ccol[cols + 1]
         lengths = ends - starts
 
-        # Transfer small lengths tensor to CPU to avoid GPU sync on .item() calls
-        lengths_cpu = lengths.cpu()
-        total = int(lengths_cpu.sum().item())  # CPU-only, no GPU sync
+        # Use pre-computed metadata if available, otherwise compute
+        if metadata is not None:
+            total, L = metadata[bucket_idx]
+            if total == 0:
+                continue
+        else:
+            # Transfer small lengths tensor to CPU to avoid GPU sync on .item() calls
+            lengths_cpu = lengths.cpu()
+            total = int(lengths_cpu.sum().item())  # CPU-only, no GPU sync
 
-        # There should already be a check that no column is empty,
-        # but extra check here that there are non-zero entries present
-        if total == 0:
-            continue
+            # There should already be a check that no column is empty,
+            # but extra check here that there are non-zero entries present
+            if total == 0:
+                continue
 
-        # This is the highest number of non-zeroes of columns in the bucket
-        L = int(lengths_cpu.max().item())  # CPU-only, no GPU sync
+            # This is the highest number of non-zeroes of columns in the bucket
+            L = int(lengths_cpu.max().item())  # CPU-only, no GPU sync
 
         # fixed prefix/flat-index logic:
         prefix = torch.cat(

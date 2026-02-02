@@ -74,9 +74,13 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
             proj_type = proj_item.proj_type
             proj_params = proj_item.proj_params
             if batching:
-                self.buckets[proj_key] = (self._compute_buckets(indices), proj_type, proj_params)
+                bucket_list = self._compute_buckets(indices)
+                metadata = self._compute_bucket_metadata(bucket_list)
+                self.buckets[proj_key] = (bucket_list, proj_type, proj_params, metadata)
             else:
-                self.buckets[proj_key] = ([indices], proj_type, proj_params)
+                bucket_list = [indices]
+                metadata = self._compute_bucket_metadata(bucket_list)
+                self.buckets[proj_key] = (bucket_list, proj_type, proj_params, metadata)
 
         # Pre-allocate a CSC tensor to hold intermediate results
         self.intermediate = torch.sparse_csc_tensor(
@@ -115,6 +119,36 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
                 buckets.append(bucket)
         return buckets
 
+    def _compute_bucket_metadata(self, buckets: list[torch.Tensor]) -> list[tuple[int, int]]:
+        """
+        Pre-compute metadata (total, L) for each bucket to avoid GPU sync during iterations.
+
+        Args:
+            buckets: List of column index tensors
+
+        Returns:
+            List of (total, L) tuples for each bucket
+        """
+        ccol = self.A.ccol_indices()
+        metadata = []
+
+        for cols in buckets:
+            if cols.numel() == 0:
+                metadata.append((0, 0))
+                continue
+
+            starts = ccol[cols]
+            ends = ccol[cols + 1]
+            lengths = ends - starts
+
+            # Compute on CPU to get Python ints
+            lengths_cpu = lengths.cpu()
+            total = int(lengths_cpu.sum().item())
+            L = int(lengths_cpu.max().item())
+            metadata.append((total, L))
+
+        return metadata
+
     def calculate(
         self,
         dual_val: torch.Tensor,
@@ -151,8 +185,9 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
             buckets = proj_item[0]
             proj_type = proj_item[1]
             proj_params = proj_item[2]
+            metadata = proj_item[3]
             fn = project(proj_type, **proj_params)
-            apply_F_to_columns(self.intermediate, fn, buckets, output_tensor=self.intermediate)
+            apply_F_to_columns(self.intermediate, fn, buckets, metadata=metadata, output_tensor=self.intermediate)
 
         # dual gradient = row sums of A * intermediate
         grad = row_sums_csc(elementwise_csc(self.A, self.intermediate, mul))
