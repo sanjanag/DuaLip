@@ -256,11 +256,11 @@ def run_benchmark(
     solve_time = time.perf_counter() - t0
 
     # Results
-    avg_iter_time = sum(result.iteration_time_log) / len(result.iteration_time_log)
+    avg_iter_time = sum(result.iteration_time_log[5:]) / len(result.iteration_time_log)
     print("\n" + "=" * 60)
     print("RESULTS")
     print("=" * 60)
-    print(f"  Solve time: {solve_time:.3f}s ({solve_time/max_iter*1000:.2f} ms/iter)")
+    print(f"  Solve time: {solve_time:.3f}s ")
     print(f"  Avg iteration time: {avg_iter_time*1000:.2f} ms/iter")
     print(f"  Dual objective: {result.dual_objective:.6f}")
     if save_primal:
