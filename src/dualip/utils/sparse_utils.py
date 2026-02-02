@@ -134,7 +134,7 @@ def apply_F_to_columns(
     M: torch.Tensor,
     F_batch: Callable[[torch.Tensor, float], torch.Tensor],
     buckets: list[torch.LongTensor],
-    metadata: Optional[list[tuple[int, int]]] = None,
+    metadata: Optional[list[tuple[int, int, torch.Tensor]]] = None,
     output_tensor: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
@@ -192,7 +192,7 @@ def apply_F_to_columns(
 
         # Use pre-computed metadata if available, otherwise compute
         if metadata is not None:
-            total, L = metadata[bucket_idx]
+            total, L, lengths_cpu = metadata[bucket_idx]
             if total == 0:
                 continue
         else:
@@ -216,14 +216,15 @@ def apply_F_to_columns(
             ]
         )
 
-        prefix_rep = prefix.repeat_interleave(lengths)  # shape (total,)
+        # Use lengths_cpu in repeat_interleave to avoid implicit GPU sync
+        prefix_rep = prefix.repeat_interleave(lengths_cpu)  # shape (total,)
         idx_in_col = torch.arange(total, device=device) - prefix_rep
-        offs = starts.repeat_interleave(lengths)
+        offs = starts.repeat_interleave(lengths_cpu)
         flat_indices = offs + idx_in_col
 
         # 2) build padded [L × K] block
         block = torch.zeros((L, K), device=device, dtype=dtype)
-        cols_rep = torch.arange(K, device=device).repeat_interleave(lengths)  # (total,)
+        cols_rep = torch.arange(K, device=device).repeat_interleave(lengths_cpu)  # (total,)
         block[idx_in_col, cols_rep] = vals[flat_indices]
 
         # 3) apply the batched projection

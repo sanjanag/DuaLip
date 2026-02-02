@@ -119,33 +119,33 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
                 buckets.append(bucket)
         return buckets
 
-    def _compute_bucket_metadata(self, buckets: list[torch.Tensor]) -> list[tuple[int, int]]:
+    def _compute_bucket_metadata(self, buckets: list[torch.Tensor]) -> list[tuple[int, int, torch.Tensor]]:
         """
-        Pre-compute metadata (total, L) for each bucket to avoid GPU sync during iterations.
+        Pre-compute metadata (total, L, lengths_cpu) for each bucket to avoid GPU sync during iterations.
 
         Args:
             buckets: List of column index tensors
 
         Returns:
-            List of (total, L) tuples for each bucket
+            List of (total, L, lengths_cpu) tuples for each bucket
         """
         ccol = self.A.ccol_indices()
         metadata = []
 
         for cols in buckets:
             if cols.numel() == 0:
-                metadata.append((0, 0))
+                metadata.append((0, 0, torch.tensor([], dtype=torch.long)))
                 continue
 
             starts = ccol[cols]
             ends = ccol[cols + 1]
             lengths = ends - starts
 
-            # Compute on CPU to get Python ints
+            # Compute on CPU to get Python ints and store CPU tensor for repeat_interleave
             lengths_cpu = lengths.cpu()
             total = int(lengths_cpu.sum().item())
             L = int(lengths_cpu.max().item())
-            metadata.append((total, L))
+            metadata.append((total, L, lengths_cpu))
 
         return metadata
 
