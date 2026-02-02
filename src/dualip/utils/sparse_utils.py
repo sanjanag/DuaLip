@@ -171,8 +171,6 @@ def apply_F_to_columns(
     assert M.layout == torch.sparse_csc, "M must be a CSC sparse tensor"
     device, dtype = M.values().device, M.values().dtype
     ccol = M.ccol_indices()  # shape (n+1,)
-    # Keep CPU copy of column pointers to avoid GPU sync on .item() calls
-    ccol_cpu = ccol.cpu()
     rowi = M.row_indices()  # shape (nnz,)
     vals = M.values()  # shape (nnz,)
 
@@ -183,12 +181,13 @@ def apply_F_to_columns(
         if K == 0:
             continue  # skip empty buckets
 
-        # 1) Compute metadata on CPU to avoid GPU synchronization
-        cols_cpu = cols.cpu()
-        starts_cpu = ccol_cpu[cols_cpu]
-        ends_cpu = ccol_cpu[cols_cpu + 1]
-        lengths_cpu = ends_cpu - starts_cpu
+        # 1) compute starts/ends & lengths for this bucket. shape (K,)
+        starts = ccol[cols]
+        ends = ccol[cols + 1]
+        lengths = ends - starts
 
+        # Transfer small lengths tensor to CPU to avoid GPU sync on .item() calls
+        lengths_cpu = lengths.cpu()
         total = int(lengths_cpu.sum().item())  # CPU-only, no GPU sync
 
         # There should already be a check that no column is empty,
@@ -198,11 +197,6 @@ def apply_F_to_columns(
 
         # This is the highest number of non-zeroes of columns in the bucket
         L = int(lengths_cpu.max().item())  # CPU-only, no GPU sync
-
-        # Compute GPU versions for actual operations (no transfer needed)
-        starts = ccol[cols]
-        ends = ccol[cols + 1]
-        lengths = ends - starts
 
         # fixed prefix/flat-index logic:
         prefix = torch.cat(
