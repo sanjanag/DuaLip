@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from operator import add, mul
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import torch
 import torch.cuda.comm as cuda_comm
@@ -267,6 +268,14 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
         return obj_result
 
 
+def _device_worker(solver, dev, dv, stream, gamma):
+    """Worker function to execute calculate on a specific device/stream."""
+    with torch.cuda.device(dev):
+        with torch.cuda.stream(stream):
+            res = solver.calculate(dv, gamma, save_primal=False)
+            return res
+
+
 class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
     """
     Wrap the single-GPU objective across multiple devices.
@@ -333,13 +342,18 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
             for solver, dev, dv in zip(self.objectives, self.compute_devices, dv_per_dev)
         ]
 
-        # Enqueue all operations with minimal overhead - no timing/prints in the critical path
+        # Enqueue all operations in parallel using threads to parallelize CPU-side work
         enqueue_start = time.perf_counter()
-        for solver, dev, dv, stream in launch_args:
-            with torch.cuda.device(dev):
-                with torch.cuda.stream(stream):
-                    res = solver.calculate(dv, gamma, save_primal=False)
-                    res_per_dev.append(res)
+        with ThreadPoolExecutor(max_workers=len(launch_args)) as executor:
+            # Submit all work to thread pool
+            futures = [
+                executor.submit(_device_worker, solver, dev, dv, stream, gamma)
+                for solver, dev, dv, stream in launch_args
+            ]
+            # Collect results as they complete
+            for future in futures:
+                res = future.result()
+                res_per_dev.append(res)
         enqueue_time = time.perf_counter() - enqueue_start
 
         # Now synchronize all streams
