@@ -333,24 +333,21 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
             for solver, dev, dv in zip(self.objectives, self.compute_devices, dv_per_dev)
         ]
 
-        loop_start = time.perf_counter()
-        # Tight loop - launch all operations with minimal Python interpreter overhead
+        # Enqueue all operations with minimal overhead - no timing/prints in the critical path
+        enqueue_start = time.perf_counter()
         for solver, dev, dv, stream in launch_args:
-            enqueue_start = time.perf_counter()
             with torch.cuda.stream(stream):
                 res = solver.calculate(dv, gamma, save_primal=False)
                 res_per_dev.append(res)
-            enqueue_time = time.perf_counter() - enqueue_start
-            print(f"[Parallelism] Device {dev}: enqueue took {enqueue_time:.6f}s")
+        enqueue_time = time.perf_counter() - enqueue_start
 
-        loop_time = time.perf_counter() - loop_start
-        print(f"[Parallelism] Total loop time: {loop_time:.6f}s")
-
+        # Now synchronize all streams
         sync_start = time.perf_counter()
         for dev in self.compute_devices:
             self.streams[dev].synchronize()
         sync_time = time.perf_counter() - sync_start
-        print(f"[Parallelism] Synchronization time: {sync_time:.6f}s")
+
+        print(f"[Parallelism] Enqueue time: {enqueue_time:.6f}s, Sync time: {sync_time:.6f}s")
 
         for res in res_per_dev:
             grads_per_dev.append(res.dual_gradient)
