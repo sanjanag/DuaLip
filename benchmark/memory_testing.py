@@ -33,20 +33,20 @@ def parse_args():
     parser.add_argument(
         "--max_iter",
         type=int,
-        default=1000,
+        default=500,
         help="Maximum number of iterations for the solver",
     )
     parser.add_argument(
         "--batching",
         type=bool,
-        default=True,
-        help="Enable batching optimization (default: True)",
+        default=False,
+        help="Enable batching optimization (default: False)",
     )
     parser.add_argument(
         "--warmup_iters",
         type=int,
-        default=10,
-        help="Number of warmup iterations before timing (default: 10)",
+        default=100,
+        help="Number of warmup iterations before timing (default: 100)",
     )
     return parser.parse_args()
 
@@ -115,6 +115,8 @@ if __name__ == "__main__":
                         dtype=dtype,
                         base_dir=args.base_dir,
                         max_iter=args.max_iter,
+                        batching=args.batching,
+                        warmup_iters=args.warmup_iters,
                     )
                 else:
                     result_metrics = run_benchmark_dist(

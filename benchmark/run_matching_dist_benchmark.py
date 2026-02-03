@@ -31,10 +31,10 @@ BASE_DIR = "./benchmark_data"  # Base directory for cache and results
 
 # Solver parameters (fixed across all runs)
 FINAL_GAMMA = 1e-3  # Final gamma value (used directly if no decay, or as target if decay enabled)
-MAX_ITER = 1000
+MAX_ITER = 500
 INITIAL_STEP_SIZE = 1e-3
 MAX_STEP_SIZE = 1e-1
-WARMUP_ITERS = 5  # Number of warmup iterations to exclude from timing statistics
+WARMUP_ITERS = 100  # Number of warmup iterations to exclude from timing statistics
 
 # Ablation toggles
 USE_GPU = True  # False = CPU, True = GPU
@@ -126,7 +126,7 @@ def parse_args():
     parser.add_argument(
         "--batching",
         type=lambda x: x.lower() == "true",
-        default=True,
+        default=False,
         help="Enable batching for projection operations (true/false)",
     )
 

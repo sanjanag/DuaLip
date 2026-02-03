@@ -30,9 +30,10 @@ BASE_DIR = "./benchmark_data"  # Base directory for cache and results
 
 # Solver parameters (fixed across all runs)
 FINAL_GAMMA = 1e-3  # Final gamma value (used directly if no decay, or as target if decay enabled)
-MAX_ITER = 1000
+MAX_ITER = 500
 INITIAL_STEP_SIZE = 1e-3
 MAX_STEP_SIZE = 1e-1
+WARMUP_ITERS = 100  # Number of warmup iterations to exclude from timing statistics
 
 # Ablation toggles
 USE_GPU = True  # False = CPU, True = GPU
@@ -117,10 +118,22 @@ def parse_args():
         default=MAX_ITER,
         help="Maximum number of iterations for the solver",
     )
+    parser.add_argument(
+        "--batching",
+        type=lambda x: x.lower() == "true",
+        default=False,
+        help="Enable batching for projection operations (true/false)",
+    )
+    parser.add_argument(
+        "--warmup_iters",
+        type=int,
+        default=WARMUP_ITERS,
+        help="Number of warmup iterations to exclude from timing statistics",
+    )
     return parser.parse_args()
 
 
-def run_benchmark(num_sources, dtype=DTYPE, cache_dir=None, output_dir=None, base_dir=BASE_DIR, max_iter=MAX_ITER):
+def run_benchmark(num_sources, dtype=DTYPE, cache_dir=None, output_dir=None, base_dir=BASE_DIR, max_iter=MAX_ITER, batching=False, warmup_iters=WARMUP_ITERS):
     import os
 
     # Generate cache and output directories based on parameters if not provided
@@ -186,7 +199,7 @@ def run_benchmark(num_sources, dtype=DTYPE, cache_dir=None, output_dir=None, bas
     objective = MatchingSolverDualObjectiveFunction(
         matching_input_args=input_args,
         gamma=initial_gamma,
-        batching=USE_GPU,  # batching only helps on GPU
+        batching=batching,
     )
     obj_time = time.time() - t0
     print(f"      {obj_time:.3f}s")
@@ -212,7 +225,8 @@ def run_benchmark(num_sources, dtype=DTYPE, cache_dir=None, output_dir=None, bas
     solve_time = time.perf_counter() - t0
 
     # Results
-    avg_iter_time = sum(result.iteration_time_log) / len(result.iteration_time_log)
+    warmup_excluded_times = result.iteration_time_log[warmup_iters:]
+    avg_iter_time = sum(warmup_excluded_times) / len(warmup_excluded_times) if warmup_excluded_times else 0
     print("\n" + "=" * 60)
     print("RESULTS")
     print("=" * 60)
@@ -265,4 +279,6 @@ if __name__ == "__main__":
         dtype=dtype,
         base_dir=args.base_dir,
         max_iter=args.max_iter,
+        batching=args.batching,
+        warmup_iters=args.warmup_iters,
     )
