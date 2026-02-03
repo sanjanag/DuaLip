@@ -364,16 +364,27 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
 
         print(f"[Parallelism] Enqueue time: {enqueue_time:.6f}s, Sync time: {sync_time:.6f}s")
 
+        # Extract tensors and clear res_per_dev to free memory
         for res in res_per_dev:
             grads_per_dev.append(res.dual_gradient)
             dual_objs_per_dev.append(res.dual_objective)
             regs_per_dev.append(res.reg_penalty)
+
+        # Clear intermediate results to free memory immediately
+        res_per_dev.clear()
+        del res_per_dev
 
         total_grad = cuda_comm.reduce_add(grads_per_dev, destination=self.host_device.index)
 
         total_dual_obj = cuda_comm.reduce_add(dual_objs_per_dev, destination=self.host_device.index)
 
         total_reg = cuda_comm.reduce_add(regs_per_dev, destination=self.host_device.index)
+
+        # Clear per-device tensors after reduction
+        grads_per_dev.clear()
+        dual_objs_per_dev.clear()
+        regs_per_dev.clear()
+        del grads_per_dev, dual_objs_per_dev, regs_per_dev
 
         # final adjustments
 
