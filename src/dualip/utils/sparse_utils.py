@@ -190,10 +190,10 @@ def apply_F_to_columns(
             total, L, starts_cpu, ends_cpu, lengths_cpu = metadata[bucket_idx]
             if total == 0:
                 continue
-            # Transfer pre-computed CPU tensors to device (async, no GPU sync)
-            starts = starts_cpu.to(device, non_blocking=True)
-            ends = ends_cpu.to(device, non_blocking=True)
-            lengths = lengths_cpu.to(device, non_blocking=True)
+            # Transfer pre-computed CPU tensors to device
+            starts = starts_cpu.to(device)
+            ends = ends_cpu.to(device)
+            lengths = lengths_cpu.to(device)
         else:
             # 1) compute starts/ends & lengths for this bucket. shape (K,)
             starts = ccol[cols]
