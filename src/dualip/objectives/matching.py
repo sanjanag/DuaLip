@@ -233,10 +233,28 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
 
         # reg penalty = (gamma/2) * ||intermediate.values||^2
         vals = self.intermediate.values()
+
+        # DIAGNOSTIC: Time scalar reductions to check if they cause synchronization
+        if self.is_distributed:
+            import time
+            t0 = time.perf_counter()
+
         reg_penalty = (self.gamma / 2) * torch.norm(vals) ** 2
 
+        if self.is_distributed:
+            t1 = time.perf_counter()
+            print(f"[DIAGNOSTIC] torch.norm took {(t1-t0)*1000:.2f}ms")
+
         # dual objective = c * intermediate.values
+        if self.is_distributed:
+            t0 = time.perf_counter()
+
         dual_obj = torch.dot(self.c.values(), vals)
+
+        if self.is_distributed:
+            t1 = time.perf_counter()
+            print(f"[DIAGNOSTIC] torch.dot took {(t1-t0)*1000:.2f}ms")
+
         primal_obj = dual_obj.clone()
         primal_var = vals
 
@@ -334,13 +352,31 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         ]
 
         # Enqueue all operations with minimal overhead - no timing/prints in the critical path
+        # Add CUDA events to measure if operations overlap
+        events_start = []
+        events_end = []
         enqueue_start = time.perf_counter()
-        for solver, dev, dv, stream in launch_args:
+
+        print("[DIAGNOSTIC] Starting to enqueue operations...")
+        for idx, (solver, dev, dv, stream) in enumerate(launch_args):
+            loop_start = time.perf_counter()
+            start_event = torch.cuda.Event(enable_timing=True)
+            end_event = torch.cuda.Event(enable_timing=True)
+
             with torch.cuda.device(dev):
                 with torch.cuda.stream(stream):
+                    start_event.record(stream)
                     res = solver.calculate(dv, gamma, save_primal=False)
+                    end_event.record(stream)
                     res_per_dev.append(res)
+
+            loop_iter_time = time.perf_counter() - loop_start
+            print(f"[DIAGNOSTIC] Device {dev}: loop iteration {idx} took {loop_iter_time*1000:.2f}ms CPU time")
+            events_start.append((dev, start_event))
+            events_end.append((dev, end_event))
+
         enqueue_time = time.perf_counter() - enqueue_start
+        print(f"[DIAGNOSTIC] All enqueues took {enqueue_time*1000:.2f}ms CPU time")
 
         # Now synchronize all streams
         sync_start = time.perf_counter()
@@ -349,6 +385,22 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         sync_time = time.perf_counter() - sync_start
 
         print(f"[Parallelism] Enqueue time: {enqueue_time:.6f}s, Sync time: {sync_time:.6f}s")
+
+        # Print GPU timing from CUDA events
+        print("[DIAGNOSTIC] GPU execution times:")
+        for (dev, start), (_, end) in zip(events_start, events_end):
+            gpu_time_ms = start.elapsed_time(end)
+            print(f"[DIAGNOSTIC] Device {dev}: {gpu_time_ms:.2f}ms GPU time")
+
+        # Calculate if operations overlapped
+        if len(events_start) >= 2:
+            total_sequential_time = sum(events_start[i][1].elapsed_time(events_end[i][1]) for i in range(len(events_start)))
+            print(f"[DIAGNOSTIC] Sum of all GPU times: {total_sequential_time:.2f}ms")
+            print(f"[DIAGNOSTIC] Actual sync time: {sync_time*1000:.2f}ms")
+            if total_sequential_time > sync_time*1000 * 1.5:
+                print(f"[DIAGNOSTIC] ✓ Operations ARE overlapping! Speedup: {total_sequential_time/(sync_time*1000):.2f}x")
+            else:
+                print(f"[DIAGNOSTIC] ✗ Operations NOT overlapping - running sequentially")
 
         for res in res_per_dev:
             grads_per_dev.append(res.dual_gradient)
