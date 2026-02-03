@@ -1,8 +1,6 @@
 from dataclasses import dataclass
 from operator import add, mul
 import time
-import torch.multiprocessing as mp
-from concurrent.futures import ThreadPoolExecutor
 
 import torch
 import torch.cuda.comm as cuda_comm
@@ -195,7 +193,6 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
         dual_val: torch.Tensor,
         gamma: float = None,
         save_primal: bool = False,
-        defer_scalars: bool = False,
     ) -> ObjectiveResult:
         """
         Compute dual gradient, objective, and reg penalty.
@@ -204,7 +201,6 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
             dual_val: current dual variables
             gamma: regularization parameter
             save_primal: if True, save the primal variable
-            defer_scalars: if True, avoid synchronizing reductions (for distributed mode)
 
         Returns:
             ObjectiveResult
@@ -235,25 +231,14 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
         # dual gradient = row sums of A * intermediate
         grad = row_sums_csc(elementwise_csc(self.A, self.intermediate, mul))
 
+        # reg penalty = (gamma/2) * ||intermediate.values||^2
         vals = self.intermediate.values()
+        reg_penalty = (self.gamma / 2) * torch.norm(vals) ** 2
 
-        if defer_scalars:
-            # For distributed mode: keep as GPU tensors to avoid stream synchronization
-            # torch.sum returns 0-d tensor on GPU (no sync), unlike torch.norm/torch.dot
-            vals_squared_sum = torch.sum(vals * vals)  # Equivalent to ||vals||^2 but no sync
-            reg_penalty = (self.gamma / 2) * vals_squared_sum
-
-            # torch.sum(a * b) equivalent to torch.dot(a, b) but stays on GPU
-            c_dot_vals = torch.sum(self.c.values() * vals)
-            dual_obj = c_dot_vals
-            primal_obj = None
-            primal_var = vals
-        else:
-            # For non-distributed mode: compute scalars immediately
-            reg_penalty = (self.gamma / 2) * torch.norm(vals) ** 2
-            dual_obj = torch.dot(self.c.values(), vals)
-            primal_obj = dual_obj.clone()
-            primal_var = vals
+        # dual objective = c * intermediate.values
+        dual_obj = torch.dot(self.c.values(), vals)
+        primal_obj = dual_obj.clone()
+        primal_var = vals
 
         if not self.is_distributed and self.b_vec is not None:
             grad, dual_obj = calc_grad(grad, dual_obj, dual_val, self.b_vec, reg_penalty)
@@ -280,14 +265,6 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
             obj_result.primal_var = primal_var
             obj_result.primal_objective = primal_obj
         return obj_result
-
-
-def _device_worker(solver, dev, dv, stream, gamma):
-    """Worker function to execute calculate on a specific device/stream."""
-    with torch.cuda.device(dev):
-        with torch.cuda.stream(stream):
-            res = solver.calculate(dv, gamma, save_primal=False, defer_scalars=True)
-            return res
 
 
 class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
@@ -356,18 +333,13 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
             for solver, dev, dv in zip(self.objectives, self.compute_devices, dv_per_dev)
         ]
 
-        # Enqueue all operations in parallel using threads to parallelize CPU-side work
+        # Enqueue all operations with minimal overhead - no timing/prints in the critical path
         enqueue_start = time.perf_counter()
-        with ThreadPoolExecutor(max_workers=len(launch_args)) as executor:
-            # Submit all work to thread pool
-            futures = [
-                executor.submit(_device_worker, solver, dev, dv, stream, gamma)
-                for solver, dev, dv, stream in launch_args
-            ]
-            # Collect results as they complete
-            for future in futures:
-                res = future.result()
-                res_per_dev.append(res)
+        for solver, dev, dv, stream in launch_args:
+            with torch.cuda.device(dev):
+                with torch.cuda.stream(stream):
+                    res = solver.calculate(dv, gamma, save_primal=False)
+                    res_per_dev.append(res)
         enqueue_time = time.perf_counter() - enqueue_start
 
         # Now synchronize all streams
