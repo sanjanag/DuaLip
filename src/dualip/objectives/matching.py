@@ -336,9 +336,10 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         # Enqueue all operations with minimal overhead - no timing/prints in the critical path
         enqueue_start = time.perf_counter()
         for solver, dev, dv, stream in launch_args:
-            with torch.cuda.stream(stream):
-                res = solver.calculate(dv, gamma, save_primal=False)
-                res_per_dev.append(res)
+            with torch.cuda.device(dev):
+                with torch.cuda.stream(stream):
+                    res = solver.calculate(dv, gamma, save_primal=False)
+                    res_per_dev.append(res)
         enqueue_time = time.perf_counter() - enqueue_start
 
         # Now synchronize all streams
