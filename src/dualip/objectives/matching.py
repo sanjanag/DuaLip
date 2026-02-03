@@ -312,9 +312,6 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         # Create persistent thread pool to avoid overhead of recreating it each iteration
         self.executor = ThreadPoolExecutor(max_workers=len(self.compute_devices))
 
-        # Track iterations for periodic cache clearing
-        self._iter_count = 0
-
     def calculate(
         self,
         dual_val: torch.Tensor,
@@ -328,11 +325,6 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
 
         if gamma is not None:
             self.gamma = gamma
-
-        # Periodically clear CUDA cache to prevent memory fragmentation
-        self._iter_count += 1
-        if self._iter_count % 50 == 0:
-            torch.cuda.empty_cache()
 
         # Ensure dual_val lives on host_device (cuda:0) to use fast GPU->GPU broadcast
         if dual_val.device != self.host_device:
