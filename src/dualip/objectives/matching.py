@@ -193,6 +193,7 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
         dual_val: torch.Tensor,
         gamma: float = None,
         save_primal: bool = False,
+        defer_scalars: bool = False,
     ) -> ObjectiveResult:
         """
         Compute dual gradient, objective, and reg penalty.
@@ -201,6 +202,7 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
             dual_val: current dual variables
             gamma: regularization parameter
             save_primal: if True, save the primal variable
+            defer_scalars: if True, avoid synchronizing reductions (for distributed mode)
 
         Returns:
             ObjectiveResult
@@ -231,14 +233,25 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
         # dual gradient = row sums of A * intermediate
         grad = row_sums_csc(elementwise_csc(self.A, self.intermediate, mul))
 
-        # reg penalty = (gamma/2) * ||intermediate.values||^2
         vals = self.intermediate.values()
-        reg_penalty = (self.gamma / 2) * torch.norm(vals) ** 2
 
-        # dual objective = c * intermediate.values
-        dual_obj = torch.dot(self.c.values(), vals)
-        primal_obj = dual_obj.clone()
-        primal_var = vals
+        if defer_scalars:
+            # For distributed mode: keep as GPU tensors to avoid stream synchronization
+            # torch.sum returns 0-d tensor on GPU (no sync), unlike torch.norm/torch.dot
+            vals_squared_sum = torch.sum(vals * vals)  # Equivalent to ||vals||^2 but no sync
+            reg_penalty = (self.gamma / 2) * vals_squared_sum
+
+            # torch.sum(a * b) equivalent to torch.dot(a, b) but stays on GPU
+            c_dot_vals = torch.sum(self.c.values() * vals)
+            dual_obj = c_dot_vals
+            primal_obj = None
+            primal_var = vals
+        else:
+            # For non-distributed mode: compute scalars immediately
+            reg_penalty = (self.gamma / 2) * torch.norm(vals) ** 2
+            dual_obj = torch.dot(self.c.values(), vals)
+            primal_obj = dual_obj.clone()
+            primal_var = vals
 
         if not self.is_distributed and self.b_vec is not None:
             grad, dual_obj = calc_grad(grad, dual_obj, dual_val, self.b_vec, reg_penalty)
@@ -338,7 +351,8 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         for solver, dev, dv, stream in launch_args:
             with torch.cuda.device(dev):
                 with torch.cuda.stream(stream):
-                    res = solver.calculate(dv, gamma, save_primal=False)
+                    # Use defer_scalars=True to avoid stream synchronization in torch.norm/torch.dot
+                    res = solver.calculate(dv, gamma, save_primal=False, defer_scalars=True)
                     res_per_dev.append(res)
         enqueue_time = time.perf_counter() - enqueue_start
 
