@@ -36,6 +36,18 @@ def parse_args():
         default=1000,
         help="Maximum number of iterations for the solver",
     )
+    parser.add_argument(
+        "--batching",
+        type=bool,
+        default=True,
+        help="Enable batching optimization (default: True)",
+    )
+    parser.add_argument(
+        "--warmup_iters",
+        type=int,
+        default=10,
+        help="Number of warmup iterations before timing (default: 10)",
+    )
     return parser.parse_args()
 
 
@@ -74,6 +86,7 @@ if __name__ == "__main__":
     print("\n" + "=" * 70)
     print(f"MEMORY TESTING: {BASE_NUM_SOURCES:,} base sources, {dtype_str}, {args.max_iter} max_iter")
     print(f"5 iters x {args.num_compute_devices} devices (1 to {args.num_compute_devices})")
+    print(f"Batching: {args.batching}, Warmup iters: {args.warmup_iters}")
     print(f"Output: {output_file}")
     print("=" * 70 + "\n")
 
@@ -111,6 +124,8 @@ if __name__ == "__main__":
                         dtype=dtype,
                         base_dir=args.base_dir,
                         max_iter=args.max_iter,
+                        batching=args.batching,
+                        warmup_iters=args.warmup_iters,
                     )
 
                 # Add iteration and num_sources to the metrics
