@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from operator import add, mul
 import time
 import torch.multiprocessing as mp
+from concurrent.futures import ThreadPoolExecutor
 
 import torch
 import torch.cuda.comm as cuda_comm
@@ -281,24 +282,12 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
         return obj_result
 
 
-def _device_worker_process(solver, dev, dv, gamma, result_queue, worker_id):
-    """Worker function to execute calculate on a specific device in a separate process.
-
-    Note: Streams cannot be shared across processes, so each process creates its own.
-    After computation, synchronize the stream to ensure GPU work completes before returning.
-    """
-    try:
-        with torch.cuda.device(dev):
-            # Create a new stream in this process (streams can't be shared across processes)
-            stream = torch.cuda.Stream(device=dev)
-            with torch.cuda.stream(stream):
-                res = solver.calculate(dv, gamma, save_primal=False, defer_scalars=True)
-            # Synchronize stream to ensure GPU work is done before returning result
-            stream.synchronize()
-            # Put result in queue with worker_id to maintain order
-            result_queue.put((worker_id, res))
-    except Exception as e:
-        result_queue.put((worker_id, e))
+def _device_worker(solver, dev, dv, stream, gamma):
+    """Worker function to execute calculate on a specific device/stream."""
+    with torch.cuda.device(dev):
+        with torch.cuda.stream(stream):
+            res = solver.calculate(dv, gamma, save_primal=False, defer_scalars=True)
+            return res
 
 
 class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
@@ -363,49 +352,31 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
 
         # Pre-build all launch arguments to minimize Python overhead
         launch_args = [
-            (solver, dev, dv)
+            (solver, dev, dv, self.streams[dev])
             for solver, dev, dv in zip(self.objectives, self.compute_devices, dv_per_dev)
         ]
 
-        # Enqueue all operations in parallel using separate processes to avoid GIL
+        # Enqueue all operations in parallel using threads to parallelize CPU-side work
         enqueue_start = time.perf_counter()
-
-        # Use 'spawn' method for CUDA compatibility (fork doesn't work with CUDA)
-        ctx = mp.get_context('spawn')
-
-        # Create queue for collecting results from processes
-        result_queue = ctx.Queue()
-
-        # Spawn processes for each device
-        processes = []
-        for worker_id, (solver, dev, dv) in enumerate(launch_args):
-            p = ctx.Process(
-                target=_device_worker_process,
-                args=(solver, dev, dv, gamma, result_queue, worker_id)
-            )
-            p.start()
-            processes.append(p)
-
-        # Wait for all processes to complete
-        for p in processes:
-            p.join()
-
-        # Collect results from queue (in order by worker_id)
-        results_dict = {}
-        for _ in range(len(processes)):
-            worker_id, res = result_queue.get()
-            if isinstance(res, Exception):
-                raise res
-            results_dict[worker_id] = res
-
-        # Add results in correct order
-        for i in range(len(processes)):
-            res_per_dev.append(results_dict[i])
-
+        with ThreadPoolExecutor(max_workers=len(launch_args)) as executor:
+            # Submit all work to thread pool
+            futures = [
+                executor.submit(_device_worker, solver, dev, dv, stream, gamma)
+                for solver, dev, dv, stream in launch_args
+            ]
+            # Collect results as they complete
+            for future in futures:
+                res = future.result()
+                res_per_dev.append(res)
         enqueue_time = time.perf_counter() - enqueue_start
-        sync_time = 0.0  # Processes handle their own synchronization
 
-        print(f"[Parallelism] Total time (enqueue + compute): {enqueue_time:.6f}s")
+        # Now synchronize all streams
+        sync_start = time.perf_counter()
+        for dev in self.compute_devices:
+            self.streams[dev].synchronize()
+        sync_time = time.perf_counter() - sync_start
+
+        print(f"[Parallelism] Enqueue time: {enqueue_time:.6f}s, Sync time: {sync_time:.6f}s")
 
         for res in res_per_dev:
             grads_per_dev.append(res.dual_gradient)
