@@ -134,7 +134,7 @@ def apply_F_to_columns(
     M: torch.Tensor,
     F_batch: Callable[[torch.Tensor, float], torch.Tensor],
     buckets: list[torch.LongTensor],
-    metadata: Optional[list[tuple[int, int, torch.Tensor, torch.Tensor, torch.Tensor]]] = None,
+    metadata: Optional[list] = None,
     output_tensor: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
@@ -145,7 +145,7 @@ def apply_F_to_columns(
     If output_tensor is provided, it will be used to store the result inplace rather
     than allocating a new tensor.
 
-    It can process input in batch by processing columns in groups (“buckets”) of
+    It can process input in batch by processing columns in groups ("buckets") of
         similar sparsity so that each group can be batched.
 
         Parameters
@@ -153,12 +153,15 @@ def apply_F_to_columns(
         M : torch.Tensor (CSC sparse)
             The input sparse matrix.
         F_batch : Callable
-            A “batched” version of your 1D F: given a zero-padded [L×k] block of
+            A "batched" version of your 1D F: given a zero-padded [L×k] block of
             column-values and scalar z, returns its [L×k] projection.  Must
             preserve zero‐padding so no new nonzeros appear.
         buckets : list of 1D LongTensors
             Disjoint subsets of column indices, covering all columns of M.  Within
-            each bucket, columns are zero-padded only up to that bucket’s max nnz.
+            each bucket, columns are zero-padded only up to that bucket's max nnz.
+        metadata : list of BucketMetadata, optional
+            Pre-computed metadata for each bucket to avoid GPU sync. If None,
+            metadata will be computed on the fly.
         output_tensor : torch.Tensor, optional
             Pre-allocated values tensor to write into instead of allocating a new one.
 
@@ -166,7 +169,7 @@ def apply_F_to_columns(
         -------
         torch.Tensor (CSC sparse)
             A sparse CSC matrix with the same sparsity pattern as M, where each
-            column’s values have been replaced by F(col_values, z).
+            column's values have been replaced by F(col_values, z).
     """
 
     assert M.layout == torch.sparse_csc, "M must be a CSC sparse tensor"
@@ -177,40 +180,32 @@ def apply_F_to_columns(
 
     new_vals = torch.empty_like(vals)
 
-    # If metadata is provided, use it; otherwise compute on the fly
-    bucket_iter = enumerate(buckets) if metadata is not None else enumerate(buckets)
-
-    for bucket_idx, cols in bucket_iter:
+    for bucket_idx, cols in enumerate(buckets):
         K = cols.numel()
         if K == 0:
             continue  # skip empty buckets
 
-        # Use pre-computed metadata if available, otherwise compute
+        # Use pre-computed metadata if available, otherwise compute on the fly
         if metadata is not None:
-            total, L, starts_cpu, ends_cpu, lengths_cpu = metadata[bucket_idx]
+            meta = metadata[bucket_idx]
+            total, L = meta.total, meta.L
             if total == 0:
                 continue
             # Transfer pre-computed CPU tensors to device
-            starts = starts_cpu.to(device)
-            ends = ends_cpu.to(device)
-            lengths = lengths_cpu.to(device)
+            starts = meta.starts.to(device)
+            lengths = meta.lengths.to(device)
         else:
-            # 1) compute starts/ends & lengths for this bucket. shape (K,)
+            # Compute starts/ends & lengths for this bucket
             starts = ccol[cols]
             ends = ccol[cols + 1]
             lengths = ends - starts
 
-            # Transfer small lengths tensor to CPU to avoid GPU sync on .item() calls
+            # Get metadata values (requires CPU transfer for .item() calls)
             lengths_cpu = lengths.cpu()
-            total = int(lengths_cpu.sum().item())  # CPU-only, no GPU sync
-
-            # There should already be a check that no column is empty,
-            # but extra check here that there are non-zero entries present
+            total = int(lengths_cpu.sum().item())
             if total == 0:
                 continue
-
-            # This is the highest number of non-zeroes of columns in the bucket
-            L = int(lengths_cpu.max().item())  # CPU-only, no GPU sync
+            L = int(lengths_cpu.max().item())
 
         # fixed prefix/flat-index logic:
         prefix = torch.cat(

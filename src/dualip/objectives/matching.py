@@ -12,6 +12,15 @@ from dualip.utils.sparse_utils import apply_F_to_columns, elementwise_csc, left_
 
 
 @dataclass
+class BucketMetadata:
+    """Pre-computed metadata for a bucket to avoid GPU sync during iterations."""
+    total: int  # Total non-zeros in bucket
+    L: int  # Max column length in bucket
+    starts: torch.Tensor  # Start indices (CPU tensor)
+    lengths: torch.Tensor  # Column lengths (CPU tensor)
+
+
+@dataclass
 class MatchingInputArgs(BaseInputArgs):
     """
     Input arguments specific to Matching objective function.
@@ -119,7 +128,7 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
                 buckets.append(bucket)
         return buckets
 
-    def _compute_bucket_metadata(self, buckets: list[torch.Tensor]) -> list[tuple[int, int, torch.Tensor, torch.Tensor, torch.Tensor]]:
+    def _compute_bucket_metadata(self, buckets: list[torch.Tensor]) -> list[BucketMetadata]:
         """
         Pre-compute metadata for each bucket to avoid GPU sync during iterations.
 
@@ -127,7 +136,7 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
             buckets: List of column index tensors
 
         Returns:
-            List of (total, L, starts_cpu, ends_cpu, lengths_cpu) tuples for each bucket
+            List of BucketMetadata for each bucket
         """
         ccol = self.A.ccol_indices()
         metadata = []
@@ -135,7 +144,7 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
         for cols in buckets:
             if cols.numel() == 0:
                 empty_tensor = torch.tensor([], dtype=torch.long)
-                metadata.append((0, 0, empty_tensor, empty_tensor, empty_tensor))
+                metadata.append(BucketMetadata(0, 0, empty_tensor, empty_tensor))
                 continue
 
             starts = ccol[cols]
@@ -144,11 +153,16 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
 
             # Store CPU versions to avoid GPU sync during iterations
             starts_cpu = starts.cpu()
-            ends_cpu = ends.cpu()
             lengths_cpu = lengths.cpu()
             total = int(lengths_cpu.sum().item())
             L = int(lengths_cpu.max().item())
-            metadata.append((total, L, starts_cpu, ends_cpu, lengths_cpu))
+
+            metadata.append(BucketMetadata(
+                total=total,
+                L=L,
+                starts=starts_cpu,
+                lengths=lengths_cpu
+            ))
 
         return metadata
 
