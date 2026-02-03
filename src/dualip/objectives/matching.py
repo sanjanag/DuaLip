@@ -327,12 +327,17 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         regs_per_dev = []
         res_per_dev = []
 
+        # Pre-build all launch arguments to minimize Python overhead
+        launch_args = [
+            (solver, dev, dv, self.streams[dev])
+            for solver, dev, dv in zip(self.objectives, self.compute_devices, dv_per_dev)
+        ]
+
         loop_start = time.perf_counter()
-        for solver, dev, dv in zip(self.objectives, self.compute_devices, dv_per_dev):
-            stream = self.streams[dev]
+        # Tight loop - launch all operations with minimal Python interpreter overhead
+        for solver, dev, dv, stream in launch_args:
             enqueue_start = time.perf_counter()
             with torch.cuda.stream(stream):
-
                 res = solver.calculate(dv, gamma, save_primal=False)
                 res_per_dev.append(res)
             enqueue_time = time.perf_counter() - enqueue_start
