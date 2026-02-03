@@ -130,6 +130,13 @@ def parse_args():
         help="Enable batching for projection operations (true/false)",
     )
 
+    parser.add_argument(
+        "--warmup_iters",
+        type=int,
+        default=WARMUP_ITERS,
+        help="Number of warmup iterations to exclude from timing statistics",
+    )
+
     return parser.parse_args()
 
 
@@ -170,6 +177,7 @@ def run_benchmark(
     base_dir=BASE_DIR,
     max_iter=MAX_ITER,
     batching=True,
+    warmup_iters=WARMUP_ITERS,
 ):
     import os
 
@@ -266,7 +274,7 @@ def run_benchmark(
     solve_time = time.perf_counter() - t0
 
     # Results
-    warmup_excluded_times = result.iteration_time_log[WARMUP_ITERS:]
+    warmup_excluded_times = result.iteration_time_log[warmup_iters:]
     avg_iter_time = sum(warmup_excluded_times) / len(warmup_excluded_times) if warmup_excluded_times else 0
     print("\n" + "=" * 60)
     print("RESULTS")
@@ -324,4 +332,5 @@ if __name__ == "__main__":
         base_dir=args.base_dir,
         max_iter=args.max_iter,
         batching=args.batching,
+        warmup_iters=args.warmup_iters,
     )
