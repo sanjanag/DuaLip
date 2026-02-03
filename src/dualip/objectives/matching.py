@@ -309,6 +309,9 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
             self.objectives.append(MatchingSolverDualObjectiveFunction(part_input_args, self.gamma, batching=batching))
         self.streams = {dev: torch.cuda.Stream(device=dev) for dev in self.compute_devices}
 
+        # Create persistent thread pool to avoid overhead of recreating it each iteration
+        self.executor = ThreadPoolExecutor(max_workers=len(self.compute_devices))
+
     def calculate(
         self,
         dual_val: torch.Tensor,
@@ -343,17 +346,16 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         ]
 
         # Enqueue all operations in parallel using threads to parallelize CPU-side work
+        # Use persistent executor to avoid overhead of creating/destroying thread pool
         enqueue_start = time.perf_counter()
-        with ThreadPoolExecutor(max_workers=len(launch_args)) as executor:
-            # Submit all work to thread pool
-            futures = [
-                executor.submit(_device_worker, solver, dev, dv, stream, gamma)
-                for solver, dev, dv, stream in launch_args
-            ]
-            # Collect results as they complete
-            for future in futures:
-                res = future.result()
-                res_per_dev.append(res)
+        futures = [
+            self.executor.submit(_device_worker, solver, dev, dv, stream, gamma)
+            for solver, dev, dv, stream in launch_args
+        ]
+        # Collect results as they complete
+        for future in futures:
+            res = future.result()
+            res_per_dev.append(res)
         enqueue_time = time.perf_counter() - enqueue_start
 
         # Now synchronize all streams
