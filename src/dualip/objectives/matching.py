@@ -17,10 +17,10 @@ class BucketMetadata:
     total: int  # Total non-zeros in bucket
     L: int  # Max column length in bucket
     K: int  # Number of columns in bucket
-    # Pre-computed repeat_interleave results (CPU tensors)
-    prefix_rep: torch.Tensor  # prefix.repeat_interleave(lengths)
-    starts_rep: torch.Tensor  # starts.repeat_interleave(lengths)
-    cols_rep: torch.Tensor  # arange(K).repeat_interleave(lengths)
+    # Pre-computed repeat_interleave results (GPU tensors - computed once at init)
+    prefix_rep: torch.Tensor  # prefix.repeat_interleave(lengths) on device
+    starts_rep: torch.Tensor  # starts.repeat_interleave(lengths) on device
+    cols_rep: torch.Tensor  # arange(K).repeat_interleave(lengths) on device
 
 
 @dataclass
@@ -142,11 +142,12 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
             List of BucketMetadata for each bucket
         """
         ccol = self.A.ccol_indices()
+        device = self.A.device
         metadata = []
 
         for cols in buckets:
             if cols.numel() == 0:
-                empty_tensor = torch.tensor([], dtype=torch.long)
+                empty_tensor = torch.tensor([], dtype=torch.long, device=device)
                 metadata.append(BucketMetadata(
                     total=0,
                     L=0,
@@ -162,29 +163,27 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
             ends = ccol[cols + 1]
             lengths = ends - starts
 
-            # Move to CPU to avoid GPU sync during iterations
-            starts_cpu = starts.cpu()
-            lengths_cpu = lengths.cpu()
-            total = int(lengths_cpu.sum().item())
-            L = int(lengths_cpu.max().item())
+            # Get scalar metadata values (syncs GPU during init, but only once)
+            total = int(lengths.sum().item())
+            L = int(lengths.max().item())
 
-            # Pre-compute all repeat_interleave operations on CPU
-            # This eliminates GPU sync in the hot path
-            prefix_cpu = torch.cat([
-                torch.tensor([0], dtype=lengths_cpu.dtype),
-                torch.cumsum(lengths_cpu[:-1], dim=0)
+            # Pre-compute all repeat_interleave operations on GPU
+            # Store GPU tensors - no transfers needed in hot path!
+            prefix = torch.cat([
+                torch.tensor([0], dtype=lengths.dtype, device=device),
+                torch.cumsum(lengths[:-1], dim=0)
             ])
-            prefix_rep_cpu = prefix_cpu.repeat_interleave(lengths_cpu)
-            starts_rep_cpu = starts_cpu.repeat_interleave(lengths_cpu)
-            cols_rep_cpu = torch.arange(K, dtype=torch.long).repeat_interleave(lengths_cpu)
+            prefix_rep = prefix.repeat_interleave(lengths)
+            starts_rep = starts.repeat_interleave(lengths)
+            cols_rep = torch.arange(K, dtype=torch.long, device=device).repeat_interleave(lengths)
 
             metadata.append(BucketMetadata(
                 total=total,
                 L=L,
                 K=K,
-                prefix_rep=prefix_rep_cpu,
-                starts_rep=starts_rep_cpu,
-                cols_rep=cols_rep_cpu
+                prefix_rep=prefix_rep,
+                starts_rep=starts_rep,
+                cols_rep=cols_rep
             ))
 
         return metadata

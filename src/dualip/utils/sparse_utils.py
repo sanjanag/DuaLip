@@ -192,11 +192,10 @@ def apply_F_to_columns(
             if total == 0:
                 continue
 
-            # Transfer pre-computed repeat_interleave results to device
-            # No repeat_interleave calls needed - eliminates GPU sync!
-            prefix_rep = meta.prefix_rep.to(device)
-            offs = meta.starts_rep.to(device)
-            cols_rep = meta.cols_rep.to(device)
+            # Use pre-computed GPU tensors directly - zero transfers, zero sync!
+            prefix_rep = meta.prefix_rep
+            offs = meta.starts_rep
+            cols_rep = meta.cols_rep
         else:
             # Compute everything on the fly (fallback path)
             starts = ccol[cols]
