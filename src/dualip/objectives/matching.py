@@ -370,13 +370,16 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         # Enqueue all operations in parallel using separate processes to avoid GIL
         enqueue_start = time.perf_counter()
 
+        # Use 'spawn' method for CUDA compatibility (fork doesn't work with CUDA)
+        ctx = mp.get_context('spawn')
+
         # Create queue for collecting results from processes
-        result_queue = mp.Queue()
+        result_queue = ctx.Queue()
 
         # Spawn processes for each device
         processes = []
         for worker_id, (solver, dev, dv) in enumerate(launch_args):
-            p = mp.Process(
+            p = ctx.Process(
                 target=_device_worker_process,
                 args=(solver, dev, dv, gamma, result_queue, worker_id)
             )
