@@ -188,14 +188,17 @@ def apply_F_to_columns(
         # Use pre-computed metadata if available, otherwise compute on the fly
         if metadata is not None:
             meta = metadata[bucket_idx]
-            total, L = meta.total, meta.L
+            total, L, K = meta.total, meta.L, meta.K
             if total == 0:
                 continue
-            # Transfer pre-computed CPU tensors to device
-            starts = meta.starts.to(device)
-            lengths = meta.lengths.to(device)
+
+            # Transfer pre-computed repeat_interleave results to device
+            # No repeat_interleave calls needed - eliminates GPU sync!
+            prefix_rep = meta.prefix_rep.to(device)
+            offs = meta.starts_rep.to(device)
+            cols_rep = meta.cols_rep.to(device)
         else:
-            # Compute starts/ends & lengths for this bucket
+            # Compute everything on the fly (fallback path)
             starts = ccol[cols]
             ends = ccol[cols + 1]
             lengths = ends - starts
@@ -207,23 +210,21 @@ def apply_F_to_columns(
                 continue
             L = int(lengths_cpu.max().item())
 
-        # fixed prefix/flat-index logic:
-        prefix = torch.cat(
-            [
+            # Compute prefix and repeat_interleave operations
+            prefix = torch.cat([
                 torch.tensor([0], device=device, dtype=lengths.dtype),
                 torch.cumsum(lengths[:-1], dim=0),
-            ]
-        )
+            ])
+            prefix_rep = prefix.repeat_interleave(lengths)
+            offs = starts.repeat_interleave(lengths)
+            cols_rep = torch.arange(K, device=device).repeat_interleave(lengths)
 
-        # Use GPU lengths for repeat_interleave operations
-        prefix_rep = prefix.repeat_interleave(lengths)  # shape (total,)
+        # Compute indices using pre-computed or computed values
         idx_in_col = torch.arange(total, device=device) - prefix_rep
-        offs = starts.repeat_interleave(lengths)
         flat_indices = offs + idx_in_col
 
-        # 2) build padded [L × K] block
+        # Build padded [L × K] block
         block = torch.zeros((L, K), device=device, dtype=dtype)
-        cols_rep = torch.arange(K, device=device).repeat_interleave(lengths)  # (total,)
         block[idx_in_col, cols_rep] = vals[flat_indices]
 
         # 3) apply the batched projection

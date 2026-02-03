@@ -16,8 +16,11 @@ class BucketMetadata:
     """Pre-computed metadata for a bucket to avoid GPU sync during iterations."""
     total: int  # Total non-zeros in bucket
     L: int  # Max column length in bucket
-    starts: torch.Tensor  # Start indices (CPU tensor)
-    lengths: torch.Tensor  # Column lengths (CPU tensor)
+    K: int  # Number of columns in bucket
+    # Pre-computed repeat_interleave results (CPU tensors)
+    prefix_rep: torch.Tensor  # prefix.repeat_interleave(lengths)
+    starts_rep: torch.Tensor  # starts.repeat_interleave(lengths)
+    cols_rep: torch.Tensor  # arange(K).repeat_interleave(lengths)
 
 
 @dataclass
@@ -144,24 +147,44 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
         for cols in buckets:
             if cols.numel() == 0:
                 empty_tensor = torch.tensor([], dtype=torch.long)
-                metadata.append(BucketMetadata(0, 0, empty_tensor, empty_tensor))
+                metadata.append(BucketMetadata(
+                    total=0,
+                    L=0,
+                    K=0,
+                    prefix_rep=empty_tensor,
+                    starts_rep=empty_tensor,
+                    cols_rep=empty_tensor
+                ))
                 continue
 
+            K = cols.numel()
             starts = ccol[cols]
             ends = ccol[cols + 1]
             lengths = ends - starts
 
-            # Store CPU versions to avoid GPU sync during iterations
+            # Move to CPU to avoid GPU sync during iterations
             starts_cpu = starts.cpu()
             lengths_cpu = lengths.cpu()
             total = int(lengths_cpu.sum().item())
             L = int(lengths_cpu.max().item())
 
+            # Pre-compute all repeat_interleave operations on CPU
+            # This eliminates GPU sync in the hot path
+            prefix_cpu = torch.cat([
+                torch.tensor([0], dtype=lengths_cpu.dtype),
+                torch.cumsum(lengths_cpu[:-1], dim=0)
+            ])
+            prefix_rep_cpu = prefix_cpu.repeat_interleave(lengths_cpu)
+            starts_rep_cpu = starts_cpu.repeat_interleave(lengths_cpu)
+            cols_rep_cpu = torch.arange(K, dtype=torch.long).repeat_interleave(lengths_cpu)
+
             metadata.append(BucketMetadata(
                 total=total,
                 L=L,
-                starts=starts_cpu,
-                lengths=lengths_cpu
+                K=K,
+                prefix_rep=prefix_rep_cpu,
+                starts_rep=starts_rep_cpu,
+                cols_rep=cols_rep_cpu
             ))
 
         return metadata
