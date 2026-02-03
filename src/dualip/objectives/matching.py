@@ -242,6 +242,7 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         gamma: float,
         host_device: torch.device,
         compute_devices: list[torch.device],
+        batching: bool = True,
     ):
         self.gamma = gamma
 
@@ -260,7 +261,7 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         for idx, (A_part, c_part) in enumerate(zip(A_splits, c_splits)):
             pm = global_to_local_projection_map(self.projection_map, split_index_map[idx])
             part_input_args = MatchingInputArgs(A_part, c_part, pm, b_vec=None, equality_mask=self.equality_mask)
-            self.objectives.append(MatchingSolverDualObjectiveFunction(part_input_args, self.gamma))
+            self.objectives.append(MatchingSolverDualObjectiveFunction(part_input_args, self.gamma, batching=batching))
         self.streams = {dev: torch.cuda.Stream(device=dev) for dev in self.compute_devices}
 
     def calculate(

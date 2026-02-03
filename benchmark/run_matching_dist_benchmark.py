@@ -34,6 +34,7 @@ FINAL_GAMMA = 1e-3  # Final gamma value (used directly if no decay, or as target
 MAX_ITER = 1000
 INITIAL_STEP_SIZE = 1e-3
 MAX_STEP_SIZE = 1e-1
+WARMUP_ITERS = 5  # Number of warmup iterations to exclude from timing statistics
 
 # Ablation toggles
 USE_GPU = True  # False = CPU, True = GPU
@@ -122,6 +123,13 @@ def parse_args():
         help="Maximum number of iterations for the solver",
     )
 
+    parser.add_argument(
+        "--batching",
+        type=lambda x: x.lower() == "true",
+        default=True,
+        help="Enable batching for projection operations (true/false)",
+    )
+
     return parser.parse_args()
 
 
@@ -161,6 +169,7 @@ def run_benchmark(
     output_dir=None,
     base_dir=BASE_DIR,
     max_iter=MAX_ITER,
+    batching=True,
 ):
     import os
 
@@ -229,6 +238,7 @@ def run_benchmark(
         gamma=initial_gamma,
         host_device=host_device,
         compute_devices=compute_devices,
+        batching=batching,
     )
 
     obj_time = time.time() - t0
@@ -256,7 +266,8 @@ def run_benchmark(
     solve_time = time.perf_counter() - t0
 
     # Results
-    avg_iter_time = sum(result.iteration_time_log[5:]) / len(result.iteration_time_log)
+    warmup_excluded_times = result.iteration_time_log[WARMUP_ITERS:]
+    avg_iter_time = sum(warmup_excluded_times) / len(warmup_excluded_times) if warmup_excluded_times else 0
     print("\n" + "=" * 60)
     print("RESULTS")
     print("=" * 60)
@@ -312,4 +323,5 @@ if __name__ == "__main__":
         dtype=dtype,
         base_dir=args.base_dir,
         max_iter=args.max_iter,
+        batching=args.batching,
     )
