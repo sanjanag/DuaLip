@@ -38,9 +38,9 @@ def parse_args():
     )
     parser.add_argument(
         "--batching",
-        type=bool,
+        type=lambda x: x.lower() == "true",
         default=False,
-        help="Enable batching optimization (default: False)",
+        help="Enable batching optimization (true/false)",
     )
     parser.add_argument(
         "--warmup_iters",
