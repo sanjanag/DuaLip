@@ -231,7 +231,9 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         if save_primal:
             raise NotImplementedError("save_primal=True is not yet supported in distributed mode")
 
-        # Each rank computes its local partition on its own device
+        # dual_val is on cuda:rank (each rank has it on its own device)
+        # local_objective data is also on cuda:rank
+        # Compute local partition
         objective_result = self.local_objective.calculate(dual_val, gamma, save_primal=False)
 
         # Move results to host device (cuda:0) for reduction

@@ -156,7 +156,8 @@ def run_benchmark():
         save_primal=False,  # Not yet supported in distributed mode
     )
 
-    initial_dual = torch.zeros_like(input_args.b_vec)
+    # Initialize dual variables on each rank's device (for broadcast to work)
+    initial_dual = torch.zeros_like(input_args.b_vec).to(device)
 
     t0 = time.time()
     result = solver.maximize(objective, initial_dual, rank=rank)
