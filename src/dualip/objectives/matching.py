@@ -3,6 +3,7 @@ from operator import add, mul
 
 import torch
 import torch.distributed as dist
+
 from dualip.objectives.base import BaseInputArgs, BaseObjective, ObjectiveResult
 from dualip.projections.base import ProjectionEntry, project
 from dualip.utils.sparse_utils import apply_F_to_columns, elementwise_csc, left_multiply_sparse, row_sums_csc
@@ -113,11 +114,7 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
         return buckets
 
     def calculate(
-        self,
-        dual_val: torch.Tensor,
-        gamma: float = None,
-        save_primal: bool = False,
-        **kwargs
+        self, dual_val: torch.Tensor, gamma: float = None, save_primal: bool = False, **kwargs
     ) -> ObjectiveResult:
         """
         Compute dual gradient, objective, and reg penalty.

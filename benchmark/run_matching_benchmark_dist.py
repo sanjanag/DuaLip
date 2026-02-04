@@ -12,13 +12,10 @@ import time
 import torch
 from generate_synthetic_data import generate_synthetic_matching_input_args
 
-from dualip.objectives.matching import (
-    MatchingInputArgs,
-    MatchingSolverDualObjectiveFunctionDistributed,
-)
+from dualip.objectives.matching import MatchingInputArgs, MatchingSolverDualObjectiveFunctionDistributed
 from dualip.optimizers.agd import AcceleratedGradientDescent
 from dualip.preprocessing.precondition import jacobi_precondition
-from dualip.utils.dist_utils import split_tensors_to_devices, global_to_local_projection_map
+from dualip.utils.dist_utils import global_to_local_projection_map, split_tensors_to_devices
 
 # =============================================================================
 # CONFIG - Edit these values
@@ -90,11 +87,7 @@ def run_benchmark():
     print("[2/4] Splitting data...")
     compute_devices = [f"cuda:{i}" for i in range(NUM_GPUS)]
 
-    A_splits, c_splits, split_index_map = split_tensors_to_devices(
-        input_args.A,
-        input_args.c,
-        compute_devices
-    )
+    A_splits, c_splits, split_index_map = split_tensors_to_devices(input_args.A, input_args.c, compute_devices)
 
     # NOW initialize distributed
     print("[3/4] Initializing distributed...")
@@ -125,11 +118,7 @@ def run_benchmark():
 
     # Create local input args (b_vec=None for local partition)
     local_input_args = MatchingInputArgs(
-        A=A_local,
-        c=c_local,
-        projection_map=pm_local,
-        b_vec=None,
-        equality_mask=input_args.equality_mask
+        A=A_local, c=c_local, projection_map=pm_local, b_vec=None, equality_mask=input_args.equality_mask
     )
 
     # Create distributed objective with local data
@@ -174,7 +163,10 @@ def run_benchmark():
         print("=" * 60)
         print(f"  Solve time: {solve_time:.3f}s ({solve_time/MAX_ITER*1000:.2f} ms/iter)")
         print(f"  Dual objective: {result.dual_objective:.6f}")
-        if hasattr(result.objective_result, 'primal_objective') and result.objective_result.primal_objective is not None:
+        if (
+            hasattr(result.objective_result, "primal_objective")
+            and result.objective_result.primal_objective is not None
+        ):
             print(f"  Primal objective: {result.objective_result.primal_objective.item():.6f}")
         print(f"  Reg penalty: {result.objective_result.reg_penalty.item():.6f}")
         max_slack = result.objective_result.max_pos_slack
