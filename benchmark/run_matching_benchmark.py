@@ -112,7 +112,7 @@ def run_benchmark():
     objective = MatchingSolverDualObjectiveFunction(
         matching_input_args=input_args,
         gamma=initial_gamma,
-        batching=USE_GPU,  # batching only helps on GPU
+        batching=False,  # Default to no batching
     )
     obj_time = time.perf_counter() - t0
     print(f"      {obj_time:.3f}s")
