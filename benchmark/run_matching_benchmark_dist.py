@@ -131,6 +131,7 @@ def run_benchmark():
         b_vec=input_args.b_vec,
         gamma=GAMMA,
         host_device="cuda:0",
+        batching=True,  # Use batching for GPU efficiency
     )
     obj_time = time.perf_counter() - t0
     if rank == 0:

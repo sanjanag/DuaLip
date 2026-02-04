@@ -221,6 +221,7 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         b_vec: torch.Tensor,
         gamma: float,
         host_device: torch.device,
+        batching: bool = True,
     ):
         """
         Initialize distributed objective with local data partition.
@@ -233,6 +234,7 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
             gamma: Regularization parameter.
             host_device: Device for aggregation, typically "cuda:0".
                 All ranks send results here via NCCL reduce.
+            batching: Whether to use batched projection operations. Default True.
         """
         self.gamma = gamma
         self.host_device = host_device
@@ -240,7 +242,7 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         self.equality_mask = local_matching_input_args.equality_mask
 
         # Create single-GPU objective with local data
-        self.local_objective = MatchingSolverDualObjectiveFunction(local_matching_input_args, gamma)
+        self.local_objective = MatchingSolverDualObjectiveFunction(local_matching_input_args, gamma, batching)
 
     def calculate(
         self,
