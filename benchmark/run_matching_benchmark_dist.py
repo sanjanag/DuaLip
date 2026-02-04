@@ -107,8 +107,9 @@ def run_benchmark():
         print("[3/4] Splitting data on CPU...")
 
     # Split data on CPU ONLY (don't move to GPUs)
-    # Pass empty device list to keep all splits on CPU
-    A_splits, c_splits, split_index_map = split_tensors_to_devices(input_args.A, input_args.c, [])
+    # Pass CPU devices to split data while keeping it on CPU
+    cpu_devices = ["cpu"] * world_size
+    A_splits, c_splits, split_index_map = split_tensors_to_devices(input_args.A, input_args.c, cpu_devices)
 
     # Each rank takes ONLY its own partition and moves to its own GPU
     A_local = A_splits[rank].to(device)
