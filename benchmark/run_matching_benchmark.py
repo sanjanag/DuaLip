@@ -90,7 +90,7 @@ def run_benchmark():
 
     # Generate data
     print("\n[1/3] Generating data...")
-    t0 = time.time()
+    t0 = time.perf_counter()
     input_args: MatchingInputArgs = generate_synthetic_matching_input_args(
         num_sources=NUM_SOURCES,
         num_destinations=NUM_DESTINATIONS,
@@ -98,7 +98,7 @@ def run_benchmark():
         device=device,
         rng=rng,
     )
-    data_time = time.time() - t0
+    data_time = time.perf_counter() - t0
     print(f"      {data_time:.3f}s | NNZ: {input_args.A._nnz()}")
 
     # Preconditioning
@@ -108,13 +108,13 @@ def run_benchmark():
 
     # Create objective
     print("[2/3] Creating objective...")
-    t0 = time.time()
+    t0 = time.perf_counter()
     objective = MatchingSolverDualObjectiveFunction(
         matching_input_args=input_args,
         gamma=initial_gamma,
         batching=USE_GPU,  # batching only helps on GPU
     )
-    obj_time = time.time() - t0
+    obj_time = time.perf_counter() - t0
     print(f"      {obj_time:.3f}s")
 
     # Create solver
@@ -133,9 +133,9 @@ def run_benchmark():
 
     initial_dual = torch.zeros_like(input_args.b_vec)
 
-    t0 = time.time()
+    t0 = time.perf_counter()
     result = solver.maximize(objective, initial_dual)
-    solve_time = time.time() - t0
+    solve_time = time.perf_counter() - t0
 
     # Results
     print("\n" + "=" * 60)
