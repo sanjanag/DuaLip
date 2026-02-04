@@ -65,7 +65,7 @@ def run_benchmark():
     # Generate data BEFORE initializing distributed
     # (Each process will generate identical data with same seed)
     print("\n[1/4] Generating data...")
-    t0 = time.time()
+    t0 = time.perf_counter()
     # Use CPU temporarily for data generation
     temp_device = "cpu"
     input_args: MatchingInputArgs = generate_synthetic_matching_input_args(
@@ -75,7 +75,7 @@ def run_benchmark():
         device=temp_device,
         rng=rng,
     )
-    data_time = time.time() - t0
+    data_time = time.perf_counter() - t0
     print(f"      {data_time:.3f}s | NNZ: {input_args.A._nnz()}")
 
     # Preconditioning (before splitting)
@@ -125,14 +125,14 @@ def run_benchmark():
     # host_device is cuda:0 for aggregation (all ranks send results there)
     if rank == 0:
         print("[4/4] Creating objective...")
-    t0 = time.time()
+    t0 = time.perf_counter()
     objective = MatchingSolverDualObjectiveFunctionDistributed(
         local_matching_input_args=local_input_args,
         b_vec=input_args.b_vec,
         gamma=GAMMA,
         host_device="cuda:0",
     )
-    obj_time = time.time() - t0
+    obj_time = time.perf_counter() - t0
     if rank == 0:
         print(f"      {obj_time:.3f}s")
 
@@ -150,10 +150,21 @@ def run_benchmark():
     # Initialize dual variables on each rank's device (for broadcast to work)
     initial_dual = torch.zeros_like(input_args.b_vec).to(device)
 
-    t0 = time.time()
-    result = solver.maximize(objective, initial_dual, rank=rank)
+    # Synchronize all ranks before timing to ensure fair measurement
     torch.distributed.barrier()
-    solve_time = time.time() - t0
+
+    # Only rank 0 measures time
+    if rank == 0:
+        t0 = time.perf_counter()
+
+    result = solver.maximize(objective, initial_dual, rank=rank)
+
+    # Synchronize all ranks after solver completes
+    torch.distributed.barrier()
+
+    # Rank 0 calculates elapsed time
+    if rank == 0:
+        solve_time = time.perf_counter() - t0
 
     # Only rank 0 prints and saves results
     if rank == 0:
