@@ -3,7 +3,7 @@ from operator import add, mul
 
 import torch
 import torch.distributed as dist
-
+import torch.cuda.comm as cuda_comm
 from dualip.objectives.base import BaseInputArgs, BaseObjective, ObjectiveResult
 from dualip.projections.base import ProjectionEntry, project
 from dualip.utils.dist_utils import global_to_local_projection_map, split_tensors_to_devices
@@ -210,7 +210,7 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         self.equality_mask = matching_input_args.equality_mask
         self.A = matching_input_args.A
         self.c = matching_input_args.c
-        self.b_vec = matching_input_args.b_vec
+        self.b_vec = matching_input_args.b_vec.to(host_device)
         self.projection_map = matching_input_args.projection_map
 
         # Split data for each GPU
@@ -221,69 +221,61 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
             part_input_args = MatchingInputArgs(A_part, c_part, pm, b_vec=None, equality_mask=self.equality_mask)
             self.objectives.append(MatchingSolverDualObjectiveFunction(part_input_args, self.gamma))
 
-        self._init_distributed()
-        # reduction buffers on host
-        self.total_grad = torch.zeros_like(self.b_vec, device=host_device)
-        self.total_dual_obj = torch.zeros(1, device=host_device)
-        self.total_reg = torch.zeros(1, device=host_device)
-
-    def _init_distributed(self) -> None:
-        if dist.is_initialized():
-            dist.destroy_process_group()
-        dist.init_process_group(backend="nccl")
-        self.streams = {dev: torch.cuda.Stream(dev) for dev in self.compute_devices}
-
     def calculate(
         self,
         dual_val: torch.Tensor,
         gamma: float = None,
         save_primal: bool = False,
+        rank: int = 0,
     ) -> ObjectiveResult:
         """Compute and reduce gradients/objectives across all GPUs."""
-
         if save_primal:
-            raise ValueError("Saving primal is not supported for distributed objective functions")
+            raise NotImplementedError("save_primal=True is not yet supported in distributed mode")
 
-        # reset buffers
-        self.total_grad.zero_()
-        self.total_dual_obj.zero_()
-        self.total_reg.zero_()
+        # Keep a copy of dual_val on host device for final calculations
+        dual_val_host = dual_val.clone()
 
-        if gamma is not None:
-            self.gamma = gamma
+        # Each rank computes its partition
+        objective = self.objectives[rank]
+        dual_val_gpu = dual_val.to(f"cuda:{rank}", non_blocking=True)
+        objective_result = objective.calculate(dual_val_gpu, gamma, save_primal=False)
 
-        # launch on each device
-        for solver, dev in zip(self.objectives, self.compute_devices):
-            with torch.cuda.stream(self.streams[dev]):
-                dv = dual_val.to(dev, non_blocking=True)
-                res = solver.calculate(dv, gamma, save_primal)
-                self.total_grad += res.dual_gradient.to(self.host_device, non_blocking=True)
-                self.total_dual_obj += res.dual_objective.to(self.host_device)
-                self.total_reg += res.reg_penalty.to(self.host_device)
+        # Move results back to host device for reduction
+        grad_host = objective_result.dual_gradient.to(self.host_device)
+        obj_host = objective_result.dual_objective.to(self.host_device)
+        reg_host = objective_result.reg_penalty.to(self.host_device)
 
-        torch.cuda.synchronize()
+        # ALL ranks participate in collective operations
+        dist.all_reduce(grad_host, op=dist.ReduceOp.SUM)
+        dist.all_reduce(obj_host, op=dist.ReduceOp.SUM)
+        dist.all_reduce(reg_host, op=dist.ReduceOp.SUM)
 
-        # all-reduce sums
-        dist.all_reduce(self.total_grad, op=dist.ReduceOp.SUM)
-        dist.all_reduce(self.total_dual_obj, op=dist.ReduceOp.SUM)
-        dist.all_reduce(self.total_reg, op=dist.ReduceOp.SUM)
+        # ALL ranks synchronize
+        dist.barrier()
 
-        # final adjustments
+        # Only rank 0 computes the final objective and returns meaningful result
+        if rank == 0:
+            grad = grad_host - self.b_vec
+            dual_val_times_grad = torch.dot(dual_val_host, grad)
+            obj = obj_host + reg_host + dual_val_times_grad
 
-        grad = self.total_grad - self.b_vec
-        dual_val_times_grad = torch.dot(dual_val, grad)
-        obj = self.total_dual_obj + self.total_reg + dual_val_times_grad
+            max_pos_slack = max(torch.max(grad), 0)
+            sum_pos_slack = torch.relu(grad).sum()
 
-        max_pos_slack = max(torch.max(grad), 0)
-        sum_pos_slack = torch.relu(grad).sum()
+            obj_result = ObjectiveResult(
+                dual_gradient=grad,
+                dual_objective=obj,
+                reg_penalty=reg_host,
+                dual_val_times_grad=dual_val_times_grad,
+                max_pos_slack=max_pos_slack,
+                sum_pos_slack=sum_pos_slack,
+            )
 
-        obj_result = ObjectiveResult(
-            dual_gradient=grad,
-            dual_objective=obj,
-            reg_penalty=self.total_reg,
-            dual_val_times_grad=dual_val_times_grad,
-            max_pos_slack=max_pos_slack,
-            sum_pos_slack=sum_pos_slack,
-        )
-
-        return obj_result
+            return obj_result
+        else:
+            # Non-zero ranks return a dummy result (won't be used by optimizer)
+            return ObjectiveResult(
+                dual_gradient=grad_host,
+                dual_objective=obj_host,
+                reg_penalty=reg_host,
+            )
