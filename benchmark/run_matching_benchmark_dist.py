@@ -83,14 +83,8 @@ def run_benchmark():
         print("      Applying preconditioning...")
         jacobi_precondition(input_args.A, input_args.b_vec)
 
-    # Split data BEFORE initializing process group
-    print("[2/4] Splitting data...")
-    compute_devices = [f"cuda:{i}" for i in range(NUM_GPUS)]
-
-    A_splits, c_splits, split_index_map = split_tensors_to_devices(input_args.A, input_args.c, compute_devices)
-
-    # NOW initialize distributed
-    print("[3/4] Initializing distributed...")
+    # Initialize distributed FIRST (before splitting)
+    print("[2/4] Initializing distributed...")
     torch.distributed.init_process_group(backend="nccl")
     rank = torch.distributed.get_rank()
     world_size = torch.distributed.get_world_size()
@@ -110,8 +104,13 @@ def run_benchmark():
         print(f"  Preconditioning: {USE_PRECONDITIONING}")
         print(f"  Gamma: {GAMMA}, Max iter: {MAX_ITER}")
         print("=" * 60)
+        print("[3/4] Splitting data on CPU...")
 
-    # Each rank takes its partition
+    # Split data on CPU ONLY (don't move to GPUs)
+    # Pass empty device list to keep all splits on CPU
+    A_splits, c_splits, split_index_map = split_tensors_to_devices(input_args.A, input_args.c, [])
+
+    # Each rank takes ONLY its own partition and moves to its own GPU
     A_local = A_splits[rank].to(device)
     c_local = c_splits[rank].to(device)
     pm_local = global_to_local_projection_map(input_args.projection_map, split_index_map[rank])
