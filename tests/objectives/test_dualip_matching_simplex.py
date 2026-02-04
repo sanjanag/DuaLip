@@ -8,6 +8,7 @@ from dualip.objectives.matching import (
 )
 from dualip.optimizers.agd import AcceleratedGradientDescent
 from dualip.projections.base import create_projection_map
+from dualip.utils.dist_utils import split_tensors_to_devices, global_to_local_projection_map
 
 HOST_DEVICE = "cpu"
 
@@ -148,48 +149,85 @@ def test_simplex_solver_inequality():
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_simplex_solver_inequality_distributed():
+    """
+    Test distributed matching objective with multi-GPU setup.
 
-    print("Running simplexInequality test")
+    This test requires torch.distributed to be initialized.
+    Run with: torchrun --nproc_per_node=2 -m pytest tests/objectives/test_dualip_matching_simplex.py::test_simplex_solver_inequality_distributed -v
+
+    When run without torchrun, this test will be skipped.
+    """
+    import torch.distributed as dist
+
+    # Skip if distributed is not initialized (not running under torchrun)
+    if not dist.is_available() or not dist.is_initialized():
+        pytest.skip("Requires torch.distributed - run with: torchrun --nproc_per_node=2 -m pytest ...")
+
+    print("Running simplexInequality distributed test")
+
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
 
     gamma = 1e-3
     a_expanded, c_expanded, b_vec = set_up_data_scala()
     J, num_items = a_expanded.shape
-    host_device = "cuda:0"
-    compute_device_num = 2
-    compute_devices = [f"cuda:{i}" for i in range(compute_device_num)]
+
+    host_device = "cuda:0"  # Aggregation device
+    compute_devices = [f"cuda:{i}" for i in range(world_size)]
 
     # Use the new convenience function for constant projection types
     projection_map = create_projection_map("simplex", {"z": 1}, num_items)
 
-    input_args = MatchingInputArgs(
-        A=a_expanded,
-        c=c_expanded,
-        projection_map=projection_map,
-        b_vec=b_vec,
+    # Split data across GPUs
+    A_splits, c_splits, split_index_map = split_tensors_to_devices(
+        a_expanded, c_expanded, compute_devices
+    )
+
+    # Each rank takes its partition
+    device = f"cuda:{rank}"
+    torch.cuda.set_device(rank)
+
+    A_local = A_splits[rank].to(device)
+    c_local = c_splits[rank].to(device)
+    pm_local = global_to_local_projection_map(projection_map, split_index_map[rank])
+
+    # Create local input args (b_vec=None for local partition)
+    local_input_args = MatchingInputArgs(
+        A=A_local,
+        c=c_local,
+        projection_map=pm_local,
+        b_vec=None,
         equality_mask=None,
     )
+
+    # Create distributed objective with new API
     f = MatchingSolverDualObjectiveFunctionDistributed(
-        matching_input_args=input_args, gamma=gamma, host_device=host_device, compute_devices=compute_devices
+        local_matching_input_args=local_input_args,
+        b_vec=b_vec,
+        gamma=gamma,
+        host_device=host_device,
     )
 
-    initial_dual = 0.1 * torch.ones(5, device=host_device)
+    initial_dual = 0.1 * torch.ones(5, device=device)
 
     solver = AcceleratedGradientDescent(max_iter=30, gamma=gamma)
-    solver_result = solver.maximize(f, initial_dual)
+    solver_result = solver.maximize(f, initial_dual, rank=rank)
 
-    true_values = [
-        (2, -3.6010155991401818),
-        (16, -3.60842718733725),
-        (23, -3.5080258013053136),
-        (29, -3.4868496294227143),
-    ]
+    # Only rank 0 checks results
+    if rank == 0:
+        true_values = [
+            (2, -3.6010155991401818),
+            (16, -3.60842718733725),
+            (23, -3.5080258013053136),
+            (29, -3.4868496294227143),
+        ]
 
-    for i, true_val in true_values:
-
-        assert abs(solver_result.dual_objective_log[i - 1] - true_val) < 1e-5, (
-            f"Solution has incorrect dual objective at iteration {i+1}"
-            f" expected dual objective value {true_val} but computed {solver_result.dual_objective_log[i-1]}"
-        )
+        for i, true_val in true_values:
+            assert abs(solver_result.dual_objective_log[i - 1] - true_val) < 1e-5, (
+                f"Solution has incorrect dual objective at iteration {i+1}"
+                f" expected dual objective value {true_val} but computed {solver_result.dual_objective_log[i-1]}"
+            )
+        print("  ✓ All assertions passed on rank 0")
 
 
 if __name__ == "__main__":
