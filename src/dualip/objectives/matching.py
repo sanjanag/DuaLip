@@ -236,12 +236,15 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         # Compute local partition
         objective_result = self.local_objective.calculate(dual_val, gamma, save_primal=False)
 
-        # Move results to host device (cuda:0) for reduction
-        grad_local = objective_result.dual_gradient.to(self.host_device)
-        obj_local = objective_result.dual_objective.to(self.host_device)
-        reg_local = objective_result.reg_penalty.to(self.host_device)
+        # Keep results on local device (cuda:rank) for NCCL reduce
+        # NCCL expects each rank to have tensor on its own GPU
+        grad_local = objective_result.dual_gradient
+        obj_local = objective_result.dual_objective
+        reg_local = objective_result.reg_penalty
 
-        # ALL ranks participate in reduce operations (send to rank 0 / cuda:0)
+        # ALL ranks participate in reduce operations
+        # Each tensor is on cuda:rank, NCCL handles cross-GPU communication
+        # After reduce, only rank 0 has the aggregated result (on cuda:0)
         dist.reduce(grad_local, dst=0, op=dist.ReduceOp.SUM)
         dist.reduce(obj_local, dst=0, op=dist.ReduceOp.SUM)
         dist.reduce(reg_local, dst=0, op=dist.ReduceOp.SUM)
@@ -251,11 +254,10 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
 
         # Only rank 0 has the aggregated results and computes final objective
         if rank == 0:
-            # Keep dual_val on host device for final calculation
-            dual_val_host = dual_val.to(self.host_device)
-
+            # After reduce, grad_local, obj_local, reg_local are on cuda:0 with aggregated values
+            # dual_val is already on cuda:0 (rank 0's device)
             grad = grad_local - self.b_vec
-            dual_val_times_grad = torch.dot(dual_val_host, grad)
+            dual_val_times_grad = torch.dot(dual_val, grad)
             obj = obj_local + reg_local + dual_val_times_grad
 
             max_pos_slack = max(torch.max(grad), 0)
@@ -273,8 +275,9 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
             return obj_result
         else:
             # Non-zero ranks return a dummy result (won't be used by optimizer)
+            # Results are still on cuda:rank (not cuda:0)
             return ObjectiveResult(
                 dual_gradient=torch.zeros_like(grad_local),
-                dual_objective=torch.tensor(0.0),
-                reg_penalty=torch.tensor(0.0),
+                dual_objective=torch.tensor(0.0, device=grad_local.device),
+                reg_penalty=torch.tensor(0.0, device=grad_local.device),
             )
