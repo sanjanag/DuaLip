@@ -1,4 +1,5 @@
 import os
+
 import pytest
 import torch
 
@@ -9,7 +10,7 @@ from dualip.objectives.matching import (
 )
 from dualip.optimizers.agd import AcceleratedGradientDescent
 from dualip.projections.base import create_projection_map
-from dualip.utils.dist_utils import split_tensors_to_devices, global_to_local_projection_map
+from dualip.utils.dist_utils import global_to_local_projection_map, split_tensors_to_devices
 
 HOST_DEVICE = "cpu"
 
@@ -165,13 +166,17 @@ def test_simplex_solver_inequality():
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-@pytest.mark.skipif("RANK" not in os.environ, reason="Requires torchrun - run with: torchrun --nproc_per_node=2 -m pytest ...")
+@pytest.mark.skipif(
+    "RANK" not in os.environ, reason="Requires torchrun - run with: torchrun --nproc_per_node=2 -m pytest ..."
+)
 def test_simplex_solver_inequality_distributed(init_distributed):
     """
     Test distributed matching objective with multi-GPU setup.
 
     This test requires torch.distributed to be initialized.
-    Run with: torchrun --nproc_per_node=2 -m pytest tests/objectives/test_dualip_matching_simplex.py::test_simplex_solver_inequality_distributed -v
+    Run with:
+        torchrun --nproc_per_node=2 -m pytest \
+            tests/objectives/test_dualip_matching_simplex.py::test_simplex_solver_inequality_distributed -v
 
     When run without torchrun, this test will be skipped.
     """
@@ -193,9 +198,7 @@ def test_simplex_solver_inequality_distributed(init_distributed):
     projection_map = create_projection_map("simplex", {"z": 1}, num_items)
 
     # Split data across GPUs
-    A_splits, c_splits, split_index_map = split_tensors_to_devices(
-        a_expanded, c_expanded, compute_devices
-    )
+    A_splits, c_splits, split_index_map = split_tensors_to_devices(a_expanded, c_expanded, compute_devices)
 
     # Each rank takes its partition
     device = f"cuda:{rank}"
