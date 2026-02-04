@@ -3,10 +3,8 @@ from operator import add, mul
 
 import torch
 import torch.distributed as dist
-import torch.cuda.comm as cuda_comm
 from dualip.objectives.base import BaseInputArgs, BaseObjective, ObjectiveResult
 from dualip.projections.base import ProjectionEntry, project
-from dualip.utils.dist_utils import global_to_local_projection_map, split_tensors_to_devices
 from dualip.utils.sparse_utils import apply_F_to_columns, elementwise_csc, left_multiply_sparse, row_sums_csc
 
 
@@ -195,8 +193,29 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
 
 class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
     """
-    Distributed wrapper for matching objective.
-    Each rank creates this with its LOCAL data partition.
+    Distributed wrapper for matching objective using PyTorch's multi-process model.
+
+    Design:
+        - Each rank (process) creates this with its LOCAL data partition
+        - Each rank computes gradients on its own GPU (cuda:rank)
+        - Results are aggregated via NCCL reduce to rank 0 (cuda:0)
+        - Only rank 0 returns meaningful results; other ranks return dummy values
+
+    Usage:
+        1. Split data before initializing torch.distributed
+        2. Each rank takes its partition by index
+        3. Each rank creates this objective with its local data
+        4. Solver coordinates distributed computation via rank parameter
+
+    Example:
+        >>> # Each rank does this:
+        >>> rank = torch.distributed.get_rank()
+        >>> A_local = A_splits[rank].to(f"cuda:{rank}")
+        >>> c_local = c_splits[rank].to(f"cuda:{rank}")
+        >>> local_args = MatchingInputArgs(A_local, c_local, pm_local, b_vec=None)
+        >>> objective = MatchingSolverDualObjectiveFunctionDistributed(
+        ...     local_args, b_vec, gamma, host_device="cuda:0"
+        ... )
     """
 
     def __init__(
@@ -207,11 +226,16 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         host_device: torch.device,
     ):
         """
+        Initialize distributed objective with local data partition.
+
         Args:
-            local_matching_input_args: Local data partition for this rank (b_vec should be None)
-            b_vec: Global constraint vector (same across all ranks)
-            gamma: Regularization parameter
-            host_device: Device for aggregation (typically cuda:rank)
+            local_matching_input_args: Local data partition for this rank.
+                Must have b_vec=None since b_vec is shared across all ranks.
+            b_vec: Global constraint vector (same across all ranks).
+                Will be moved to host_device for final aggregation.
+            gamma: Regularization parameter.
+            host_device: Device for aggregation, typically "cuda:0".
+                All ranks send results here via NCCL reduce.
         """
         self.gamma = gamma
         self.host_device = host_device

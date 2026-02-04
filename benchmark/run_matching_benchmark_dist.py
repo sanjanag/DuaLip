@@ -1,6 +1,9 @@
 """
-Single-GPU benchmark for matching problem.
+Distributed multi-GPU benchmark for matching problem.
 Edit the CONFIG section below to change parameters.
+
+Usage:
+    torchrun --nproc_per_node=<num_gpus> benchmark/run_matching_benchmark_dist.py
 """
 
 import csv
@@ -11,11 +14,11 @@ from generate_synthetic_data import generate_synthetic_matching_input_args
 
 from dualip.objectives.matching import (
     MatchingInputArgs,
-    MatchingSolverDualObjectiveFunction,
     MatchingSolverDualObjectiveFunctionDistributed,
 )
 from dualip.optimizers.agd import AcceleratedGradientDescent
 from dualip.preprocessing.precondition import jacobi_precondition
+from dualip.utils.dist_utils import split_tensors_to_devices, global_to_local_projection_map
 
 # =============================================================================
 # CONFIG - Edit these values
@@ -26,6 +29,9 @@ NUM_SOURCES = 25_000_000
 NUM_DESTINATIONS = 10_000
 TARGET_SPARSITY = 0.001
 SEED = 42
+
+# Distributed parameters
+NUM_GPUS = 2  # Number of GPUs to use for distributed training
 
 # Solver parameters (fixed across all runs)
 GAMMA = 1e-3
@@ -82,11 +88,7 @@ def run_benchmark():
 
     # Split data BEFORE initializing process group
     print("[2/4] Splitting data...")
-    from dualip.utils.dist_utils import split_tensors_to_devices, global_to_local_projection_map
-
-    # Determine number of GPUs
-    num_gpus = 2  # Set this based on your system
-    compute_devices = [f"cuda:{i}" for i in range(num_gpus)]
+    compute_devices = [f"cuda:{i}" for i in range(NUM_GPUS)]
 
     A_splits, c_splits, split_index_map = split_tensors_to_devices(
         input_args.A,

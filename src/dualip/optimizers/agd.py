@@ -2,6 +2,7 @@ import math
 from typing import Callable, Optional
 
 import torch
+import torch.distributed as dist
 
 from dualip.objectives.base import BaseObjective
 from dualip.optimizers.agd_utils import calculate_step_size
@@ -135,8 +136,6 @@ class AcceleratedGradientDescent:
         where dual_obj_log is the list of dual objective values recorded at each iteration
         and step_size_log is the list of the dynamic step size.
         """
-        import torch.distributed as dist
-
         grad_history = []
         dual_history = []
         dual_obj_log = []  # Log of dual objective values per iteration
