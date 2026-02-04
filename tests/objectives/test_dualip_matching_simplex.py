@@ -1,3 +1,4 @@
+import os
 import pytest
 import torch
 
@@ -11,6 +12,22 @@ from dualip.projections.base import create_projection_map
 from dualip.utils.dist_utils import split_tensors_to_devices, global_to_local_projection_map
 
 HOST_DEVICE = "cpu"
+
+
+@pytest.fixture(scope="module")
+def init_distributed():
+    """Initialize torch.distributed if running under torchrun."""
+    import torch.distributed as dist
+
+    # Check if torchrun set the environment variables
+    if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
+        if not dist.is_initialized():
+            dist.init_process_group(backend="nccl")
+        yield
+        # Don't destroy - torchrun manages the lifecycle
+    else:
+        # Not running under torchrun, skip distributed tests
+        yield
 
 
 def set_up_data_scala():
@@ -148,7 +165,8 @@ def test_simplex_solver_inequality():
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-def test_simplex_solver_inequality_distributed():
+@pytest.mark.skipif("RANK" not in os.environ, reason="Requires torchrun - run with: torchrun --nproc_per_node=2 -m pytest ...")
+def test_simplex_solver_inequality_distributed(init_distributed):
     """
     Test distributed matching objective with multi-GPU setup.
 
@@ -158,10 +176,6 @@ def test_simplex_solver_inequality_distributed():
     When run without torchrun, this test will be skipped.
     """
     import torch.distributed as dist
-
-    # Skip if distributed is not initialized (not running under torchrun)
-    if not dist.is_available() or not dist.is_initialized():
-        pytest.skip("Requires torch.distributed - run with: torchrun --nproc_per_node=2 -m pytest ...")
 
     print("Running simplexInequality distributed test")
 
