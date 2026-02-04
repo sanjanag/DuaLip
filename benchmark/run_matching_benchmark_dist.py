@@ -28,27 +28,13 @@ TARGET_SPARSITY = 0.001
 SEED = 42
 
 # Solver parameters (fixed across all runs)
-FINAL_GAMMA = 1e-3  # Final gamma value (used directly if no decay, or as target if decay enabled)
+GAMMA = 1e-3
 MAX_ITER = 1000
 INITIAL_STEP_SIZE = 1e-3
 MAX_STEP_SIZE = 1e-1
 
 # Ablation toggles
-USE_GPU = True  # False = CPU, True = GPU
 USE_PRECONDITIONING = False  # Jacobi preconditioning
-USE_GAMMA_DECAY = False  # Regularization decay
-
-# Gamma decay settings (only used if USE_GAMMA_DECAY=True)
-GAMMA_DECAY_STEPS = 35
-GAMMA_DECAY_FACTOR = 0.7
-
-
-def compute_initial_gamma():
-    """Compute initial gamma so that we end at FINAL_GAMMA after all decay steps."""
-    if not USE_GAMMA_DECAY:
-        return FINAL_GAMMA
-    num_decays = MAX_ITER // GAMMA_DECAY_STEPS
-    return FINAL_GAMMA / (GAMMA_DECAY_FACTOR**num_decays)
 
 
 def get_output_filename():
@@ -57,13 +43,11 @@ def get_output_filename():
         f"s{NUM_SOURCES//1_000_000}M",
         f"d{NUM_DESTINATIONS//1_000}K",
         f"sp{TARGET_SPARSITY}",
-        f"g{FINAL_GAMMA}",
+        f"g{GAMMA}",
         f"iter{MAX_ITER}",
     ]
     if USE_PRECONDITIONING:
         parts.append("precon")
-    if USE_GAMMA_DECAY:
-        parts.append(f"decay{GAMMA_DECAY_FACTOR}x{GAMMA_DECAY_STEPS}")
     return "_".join(parts) + ".csv"
 
 
@@ -73,75 +57,108 @@ def get_output_filename():
 
 
 def run_benchmark():
-    device = "cuda:0" if USE_GPU else "cpu"
     rng = None  # np.random.default_rng(SEED)
-    initial_gamma = compute_initial_gamma()
 
-    print("=" * 60)
-    print("CONFIG")
-    print("=" * 60)
-    print(f"  Data: {NUM_SOURCES} sources x {NUM_DESTINATIONS} destinations")
-    print(f"  Sparsity: {TARGET_SPARSITY}")
-    print(f"  Seed: {SEED}")
-    print(f"  Device: {device}")
-    print(f"  Preconditioning: {USE_PRECONDITIONING}")
-    print(f"  Gamma decay: {USE_GAMMA_DECAY}")
-    if USE_GAMMA_DECAY:
-        print(f"  Gamma: {initial_gamma} -> {FINAL_GAMMA}, Max iter: {MAX_ITER}")
-    else:
-        print(f"  Gamma: {FINAL_GAMMA}, Max iter: {MAX_ITER}")
-    print("=" * 60)
-
-    # Generate data
-    print("\n[1/3] Generating data...")
+    # Generate data BEFORE initializing distributed
+    # (Each process will generate identical data with same seed)
+    print("\n[1/4] Generating data...")
     t0 = time.time()
+    # Use CPU temporarily for data generation
+    temp_device = "cpu"
     input_args: MatchingInputArgs = generate_synthetic_matching_input_args(
         num_sources=NUM_SOURCES,
         num_destinations=NUM_DESTINATIONS,
         target_sparsity=TARGET_SPARSITY,
-        device=device,
+        device=temp_device,
         rng=rng,
     )
     data_time = time.time() - t0
     print(f"      {data_time:.3f}s | NNZ: {input_args.A._nnz()}")
 
-    # Preconditioning
+    # Preconditioning (before splitting)
     if USE_PRECONDITIONING:
         print("      Applying preconditioning...")
         jacobi_precondition(input_args.A, input_args.b_vec)
 
-    # Create objective
-    print("[2/3] Creating objective...")
+    # Split data BEFORE initializing process group
+    print("[2/4] Splitting data...")
+    from dualip.utils.dist_utils import split_tensors_to_devices, global_to_local_projection_map
+
+    # Determine number of GPUs
+    num_gpus = 2  # Set this based on your system
+    compute_devices = [f"cuda:{i}" for i in range(num_gpus)]
+
+    A_splits, c_splits, split_index_map = split_tensors_to_devices(
+        input_args.A,
+        input_args.c,
+        compute_devices
+    )
+
+    # NOW initialize distributed
+    print("[3/4] Initializing distributed...")
+    torch.distributed.init_process_group(backend="nccl")
+    rank = torch.distributed.get_rank()
+    world_size = torch.distributed.get_world_size()
+
+    # Each rank sets its device
+    device = f"cuda:{rank}"
+    torch.cuda.set_device(rank)
+
+    if rank == 0:
+        print("=" * 60)
+        print("CONFIG")
+        print("=" * 60)
+        print(f"  Data: {NUM_SOURCES} sources x {NUM_DESTINATIONS} destinations")
+        print(f"  Sparsity: {TARGET_SPARSITY}")
+        print(f"  Seed: {SEED}")
+        print(f"  World size: {world_size}")
+        print(f"  Preconditioning: {USE_PRECONDITIONING}")
+        print(f"  Gamma: {GAMMA}, Max iter: {MAX_ITER}")
+        print("=" * 60)
+
+    # Each rank takes its partition
+    A_local = A_splits[rank].to(device)
+    c_local = c_splits[rank].to(device)
+    pm_local = global_to_local_projection_map(input_args.projection_map, split_index_map[rank])
+
+    # Create local input args (b_vec=None for local partition)
+    local_input_args = MatchingInputArgs(
+        A=A_local,
+        c=c_local,
+        projection_map=pm_local,
+        b_vec=None,
+        equality_mask=input_args.equality_mask
+    )
+
+    # Create distributed objective with local data
+    # host_device is cuda:0 for aggregation (all ranks send results there)
+    if rank == 0:
+        print("[4/4] Creating objective...")
     t0 = time.time()
-    compute_devices = [f"cuda:{i}" for i in range(2)]
     objective = MatchingSolverDualObjectiveFunctionDistributed(
-        matching_input_args=input_args,
-        gamma=initial_gamma,
-        compute_devices=compute_devices,
-        host_device=device,
+        local_matching_input_args=local_input_args,
+        b_vec=input_args.b_vec,
+        gamma=GAMMA,
+        host_device="cuda:0",
     )
     obj_time = time.time() - t0
-    print(f"      {obj_time:.3f}s")
+    if rank == 0:
+        print(f"      {obj_time:.3f}s")
 
     # Create solver
-    print("[3/3] Running solver...")
+    if rank == 0:
+        print("Running solver...")
     solver = AcceleratedGradientDescent(
         max_iter=MAX_ITER,
-        gamma=initial_gamma,
+        gamma=GAMMA,
         initial_step_size=INITIAL_STEP_SIZE,
         max_step_size=MAX_STEP_SIZE,
-        gamma_decay_type="step" if USE_GAMMA_DECAY else None,
-        gamma_decay_params=(
-            {"decay_steps": GAMMA_DECAY_STEPS, "decay_factor": GAMMA_DECAY_FACTOR} if USE_GAMMA_DECAY else None
-        ),
         save_primal=False,  # Not yet supported in distributed mode
     )
 
     initial_dual = torch.zeros_like(input_args.b_vec)
 
     t0 = time.time()
-    torch.distributed.init_process_group(backend="nccl")
-    rank = torch.distributed.get_rank()
     result = solver.maximize(objective, initial_dual, rank=rank)
     torch.distributed.barrier()
     solve_time = time.time() - t0

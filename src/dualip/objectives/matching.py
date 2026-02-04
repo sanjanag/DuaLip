@@ -194,32 +194,31 @@ class MatchingSolverDualObjectiveFunction(BaseObjective):
 
 class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
     """
-    Wrap the single-GPU objective across multiple devices.
+    Distributed wrapper for matching objective.
+    Each rank creates this with its LOCAL data partition.
     """
 
     def __init__(
         self,
-        matching_input_args: MatchingInputArgs,
+        local_matching_input_args: MatchingInputArgs,
+        b_vec: torch.Tensor,
         gamma: float,
         host_device: torch.device,
-        compute_devices: list[torch.device],
     ):
+        """
+        Args:
+            local_matching_input_args: Local data partition for this rank (b_vec should be None)
+            b_vec: Global constraint vector (same across all ranks)
+            gamma: Regularization parameter
+            host_device: Device for aggregation (typically cuda:rank)
+        """
         self.gamma = gamma
         self.host_device = host_device
-        self.compute_devices = compute_devices
-        self.equality_mask = matching_input_args.equality_mask
-        self.A = matching_input_args.A
-        self.c = matching_input_args.c
-        self.b_vec = matching_input_args.b_vec.to(host_device)
-        self.projection_map = matching_input_args.projection_map
+        self.b_vec = b_vec.to(host_device)
+        self.equality_mask = local_matching_input_args.equality_mask
 
-        # Split data for each GPU
-        A_splits, c_splits, split_index_map = split_tensors_to_devices(self.A, self.c, compute_devices)
-        self.objectives = []
-        for idx, (A_part, c_part) in enumerate(zip(A_splits, c_splits)):
-            pm = global_to_local_projection_map(self.projection_map, split_index_map[idx])
-            part_input_args = MatchingInputArgs(A_part, c_part, pm, b_vec=None, equality_mask=self.equality_mask)
-            self.objectives.append(MatchingSolverDualObjectiveFunction(part_input_args, self.gamma))
+        # Create single-GPU objective with local data
+        self.local_objective = MatchingSolverDualObjectiveFunction(local_matching_input_args, gamma)
 
     def calculate(
         self,
@@ -232,32 +231,30 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         if save_primal:
             raise NotImplementedError("save_primal=True is not yet supported in distributed mode")
 
-        # Keep a copy of dual_val on host device for final calculations
-        dual_val_host = dual_val.clone()
+        # Each rank computes its local partition on its own device
+        objective_result = self.local_objective.calculate(dual_val, gamma, save_primal=False)
 
-        # Each rank computes its partition
-        objective = self.objectives[rank]
-        dual_val_gpu = dual_val.to(f"cuda:{rank}", non_blocking=True)
-        objective_result = objective.calculate(dual_val_gpu, gamma, save_primal=False)
+        # Move results to host device (cuda:0) for reduction
+        grad_local = objective_result.dual_gradient.to(self.host_device)
+        obj_local = objective_result.dual_objective.to(self.host_device)
+        reg_local = objective_result.reg_penalty.to(self.host_device)
 
-        # Move results back to host device for reduction
-        grad_host = objective_result.dual_gradient.to(self.host_device)
-        obj_host = objective_result.dual_objective.to(self.host_device)
-        reg_host = objective_result.reg_penalty.to(self.host_device)
-
-        # ALL ranks participate in collective operations
-        dist.all_reduce(grad_host, op=dist.ReduceOp.SUM)
-        dist.all_reduce(obj_host, op=dist.ReduceOp.SUM)
-        dist.all_reduce(reg_host, op=dist.ReduceOp.SUM)
+        # ALL ranks participate in reduce operations (send to rank 0 / cuda:0)
+        dist.reduce(grad_local, dst=0, op=dist.ReduceOp.SUM)
+        dist.reduce(obj_local, dst=0, op=dist.ReduceOp.SUM)
+        dist.reduce(reg_local, dst=0, op=dist.ReduceOp.SUM)
 
         # ALL ranks synchronize
         dist.barrier()
 
-        # Only rank 0 computes the final objective and returns meaningful result
+        # Only rank 0 has the aggregated results and computes final objective
         if rank == 0:
-            grad = grad_host - self.b_vec
+            # Keep dual_val on host device for final calculation
+            dual_val_host = dual_val.to(self.host_device)
+
+            grad = grad_local - self.b_vec
             dual_val_times_grad = torch.dot(dual_val_host, grad)
-            obj = obj_host + reg_host + dual_val_times_grad
+            obj = obj_local + reg_local + dual_val_times_grad
 
             max_pos_slack = max(torch.max(grad), 0)
             sum_pos_slack = torch.relu(grad).sum()
@@ -265,7 +262,7 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
             obj_result = ObjectiveResult(
                 dual_gradient=grad,
                 dual_objective=obj,
-                reg_penalty=reg_host,
+                reg_penalty=reg_local,
                 dual_val_times_grad=dual_val_times_grad,
                 max_pos_slack=max_pos_slack,
                 sum_pos_slack=sum_pos_slack,
@@ -275,7 +272,7 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         else:
             # Non-zero ranks return a dummy result (won't be used by optimizer)
             return ObjectiveResult(
-                dual_gradient=grad_host,
-                dual_objective=obj_host,
-                reg_penalty=reg_host,
+                dual_gradient=torch.zeros_like(grad_local),
+                dual_objective=torch.tensor(0.0),
+                reg_penalty=torch.tensor(0.0),
             )
