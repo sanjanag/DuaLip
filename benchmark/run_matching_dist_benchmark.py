@@ -270,26 +270,33 @@ def run_benchmark(
     initial_dual = torch.zeros_like(input_args.b_vec).to(host_device)
 
     t0 = time.perf_counter()
-    result = solver.maximize(objective, initial_dual)
-    solve_time = time.perf_counter() - t0
 
-    # Results
-    warmup_excluded_times = result.iteration_time_log[warmup_iters:]
-    avg_iter_time = sum(warmup_excluded_times) / len(warmup_excluded_times) if warmup_excluded_times else 0
-    print("\n" + "=" * 60)
-    print("RESULTS")
-    print("=" * 60)
-    print(f"  Solve time: {solve_time:.3f}s ")
-    print(f"  Avg iteration time: {avg_iter_time*1000:.2f} ms/iter")
-    print(f"  Dual objective: {result.dual_objective:.6f}")
-    if save_primal:
-        print(f"  Primal objective: {result.objective_result.primal_objective.item():.6f}")
-    print(f"  Reg penalty: {result.objective_result.reg_penalty.item():.6f}")
-    max_slack = result.objective_result.max_pos_slack
-    max_slack = max_slack.item() if hasattr(max_slack, "item") else max_slack
-    print(f"  Max positive slack: {max_slack:.6e}")
-    print(f"  Sum positive slack: {result.objective_result.sum_pos_slack.item():.6e}")
-    print("=" * 60)
+    torch.distributed.init_process_group(backend="nccl")
+    rank = torch.distributed.get_rank()
+    result = solver.maximize(objective, initial_dual, rank=rank)
+    torch.distributed.barrier()
+    if rank == 0:
+        
+        solve_time = time.perf_counter() - t0
+
+        # Results
+        warmup_excluded_times = result.iteration_time_log[warmup_iters:]
+        avg_iter_time = sum(warmup_excluded_times) / len(warmup_excluded_times) if warmup_excluded_times else 0
+        print("\n" + "=" * 60)
+        print("RESULTS")
+        print("=" * 60)
+        print(f"  Solve time: {solve_time:.3f}s ")
+        print(f"  Avg iteration time: {avg_iter_time*1000:.2f} ms/iter")
+        print(f"  Dual objective: {result.dual_objective:.6f}")
+        if save_primal:
+            print(f"  Primal objective: {result.objective_result.primal_objective.item():.6f}")
+        print(f"  Reg penalty: {result.objective_result.reg_penalty.item():.6f}")
+        max_slack = result.objective_result.max_pos_slack
+        max_slack = max_slack.item() if hasattr(max_slack, "item") else max_slack
+        print(f"  Max positive slack: {max_slack:.6e}")
+        print(f"  Sum positive slack: {result.objective_result.sum_pos_slack.item():.6e}")
+        print("=" * 60)
+    torch.distributed.barrier()
 
     # Save dual objective and iteration times to CSV
     import os

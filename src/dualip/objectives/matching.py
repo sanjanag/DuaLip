@@ -288,6 +288,7 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         host_device: torch.device,
         compute_devices: list[torch.device],
         batching: bool = True,
+        rank: int = 0,
     ):
         self.gamma = gamma
 
@@ -295,22 +296,32 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
         self.compute_device_indices = [d.index for d in self.compute_devices]  # [0, 1]
         self.host_device = torch.device(host_device)  # should be torch.device("cuda:0")
         self.equality_mask = matching_input_args.equality_mask
-        self.A = matching_input_args.A
+        # spliot A across the second dim        
+
         self.c = matching_input_args.c
         self.b_vec = matching_input_args.b_vec.to(self.host_device, non_blocking=True)
         self.projection_map = matching_input_args.projection_map
 
         # Split data for each GPU
         A_splits, c_splits, split_index_map = split_tensors_to_devices(self.A, self.c, compute_devices)
-        self.objectives = []
-        for idx, (A_part, c_part) in enumerate(zip(A_splits, c_splits)):
-            pm = global_to_local_projection_map(self.projection_map, split_index_map[idx])
-            part_input_args = MatchingInputArgs(A_part, c_part, pm, b_vec=None, equality_mask=self.equality_mask)
-            self.objectives.append(MatchingSolverDualObjectiveFunction(part_input_args, self.gamma, batching=batching))
-        self.streams = {dev: torch.cuda.Stream(device=dev) for dev in self.compute_devices}
 
-        # Create persistent thread pool to avoid overhead of recreating it each iteration
-        self.executor = ThreadPoolExecutor(max_workers=len(self.compute_devices))
+        self.A = A_splits[rank]
+        self.c = c_splits[rank]
+        self.split_index_map = split_index_map[rank]
+        self.pm = global_to_local_projection_map(self.projection_map, self.split_index_map)
+        self.b_vec = matching_input_args.b_vec.to(f"cuda:{rank}", non_blocking=True)
+        self.rank = rank
+
+
+        # self.objectives = []
+        # for idx, (A_part, c_part) in enumerate(zip(A_splits, c_splits)):
+        #     pm = global_to_local_projection_map(self.projection_map, split_index_map[idx])
+        #     part_input_args = MatchingInputArgs(A_part, c_part, pm, b_vec=None, equality_mask=self.equality_mask)
+        #     self.objectives.append(MatchingSolverDualObjectiveFunction(part_input_args, self.gamma, batching=batching))
+        # self.streams = {dev: torch.cuda.Stream(device=dev) for dev in self.compute_devices}
+
+        # # Create persistent thread pool to avoid overhead of recreating it each iteration
+        # self.executor = ThreadPoolExecutor(max_workers=len(self.compute_devices))
 
     def calculate(
         self,
@@ -372,6 +383,12 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
             dual_objs_per_dev.append(res.dual_objective)
             regs_per_dev.append(res.reg_penalty)
 
+
+
+        total_grad = cuda_comm.reduce_add(grads_per_dev, destination=0)
+        total_dual_obj = cuda_comm.reduce_add(dual_objs_per_dev, destination=0)
+        total_reg = cuda_comm.reduce_add(regs_per_dev, destination=0)
+
         # Clear intermediate results to free memory immediately
         res_per_dev.clear()
         del res_per_dev
@@ -396,7 +413,7 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
 
         max_pos_slack = max(torch.max(grad), 0)
         sum_pos_slack = torch.relu(grad).sum()
-
+    
         obj_result = ObjectiveResult(
             dual_gradient=grad,
             dual_objective=dual_obj,
@@ -406,4 +423,4 @@ class MatchingSolverDualObjectiveFunctionDistributed(BaseObjective):
             sum_pos_slack=sum_pos_slack,
         )
 
-        return obj_result
+        return obj_result if rank == 0 else None

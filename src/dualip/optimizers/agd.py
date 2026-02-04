@@ -118,7 +118,7 @@ class AcceleratedGradientDescent:
             # Ensure optimizer never crashes due to logging/printing
             pass
 
-    def maximize(self, f: BaseObjective, initial_value: torch.Tensor) -> SolverResult:
+    def maximize(self, f: BaseObjective, initial_value: torch.Tensor, rank: int = 0) -> SolverResult:
         """
         Maximizes the dual-primal objective function f.
         f must provide a method:
@@ -149,62 +149,51 @@ class AcceleratedGradientDescent:
 
             if i == self.max_iter and self.save_primal:
                 objective_result: ObjectiveResult = f.calculate(
-                    dual_val=x, **gamma_params, save_primal=self.save_primal
+                    dual_val=x, **gamma_params, save_primal=self.save_primal, rank=rank
                 )
             else:
-                objective_result: ObjectiveResult = f.calculate(dual_val=x, **gamma_params)
+                objective_result: ObjectiveResult = f.calculate(dual_val=x, **gamma_params, rank=rank) if rank == 0 else None
+            torch.distributed.barrier()
+            if rank == 0:
 
-            # Invoke decoupled iteration callback (prints by default; can be overridden)
-            self.iteration_callback(i, objective_result)
+                # Gradient ascent step.
+                y_new = x + objective_result.dual_gradient * step_size
+                y_new = project_on_nn_cone(y_new, equality_mask)
+                # Accelerated update.
+                x = (y_new * (1.0 - self.beta_seq[i - 1])) + (y * self.beta_seq[i - 1])
+                y = y_new
+                if self.gamma is not None and self.gamma_decay_type is not None:
+                    self._update_gamma(i, step_size)
 
-            dual_obj = objective_result.dual_objective.cpu().item()
-            dual_obj_log.append(dual_obj)
+                # Log iteration metrics (will check MLflow state internally)
+                iteration_metrics = {
+                    "step_size": step_size,
+                    "dual_objective": dual_obj,
+                }
 
-            step_size = calculate_step_size(
-                objective_result.dual_gradient,
-                y,
-                grad_history,
-                dual_history,
-                initial_step_size=self.initial_step_size,
-                max_step_size=self.max_step_size,
+                if self.gamma is not None:
+                    iteration_metrics["gamma"] = self.gamma
+
+                log_metrics(iteration_metrics, step=i)
+
+                # Log objective result details
+                log_objective_result(objective_result, step=i)
+
+                # Record iteration time
+                iter_time = time.perf_counter() - iter_start_time
+                iteration_time_log.append(iter_time)
+
+                i += 1
+
+            solver_result = SolverResult(
+                dual_val=y,
+                dual_objective=dual_obj,
+                objective_result=objective_result,
+                dual_objective_log=dual_obj_log,
+                step_size_log=step_size_log,
+                iteration_time_log=iteration_time_log,
             )
-
-            step_size_log.append(step_size)
-            # Gradient ascent step.
-            y_new = x + objective_result.dual_gradient * step_size
-            y_new = project_on_nn_cone(y_new, equality_mask)
-            # Accelerated update.
-            x = (y_new * (1.0 - self.beta_seq[i - 1])) + (y * self.beta_seq[i - 1])
-            y = y_new
-            if self.gamma is not None and self.gamma_decay_type is not None:
-                self._update_gamma(i, step_size)
-
-            # Log iteration metrics (will check MLflow state internally)
-            iteration_metrics = {
-                "step_size": step_size,
-                "dual_objective": dual_obj,
-            }
-
-            if self.gamma is not None:
-                iteration_metrics["gamma"] = self.gamma
-
-            log_metrics(iteration_metrics, step=i)
-
-            # Log objective result details
-            log_objective_result(objective_result, step=i)
-
-            # Record iteration time
-            iter_time = time.perf_counter() - iter_start_time
-            iteration_time_log.append(iter_time)
-
-            i += 1
-
-        solver_result = SolverResult(
-            dual_val=y,
-            dual_objective=dual_obj,
-            objective_result=objective_result,
-            dual_objective_log=dual_obj_log,
-            step_size_log=step_size_log,
-            iteration_time_log=iteration_time_log,
-        )
-        return solver_result
+            return solver_result
+        
+        else:
+            return None
