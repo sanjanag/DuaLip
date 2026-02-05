@@ -32,7 +32,6 @@ GAMMA = 1e-3
 
 def run_benchmark(cache_dir: str | None = None):
     # Initialize distributed FIRST to get rank
-    print("[1/4] Initializing distributed...")
     torch.distributed.init_process_group(backend="nccl")
     rank = torch.distributed.get_rank()
     world_size = torch.distributed.get_world_size()
