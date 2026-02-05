@@ -4,6 +4,7 @@ Edit the CONFIG section below to change parameters.
 """
 
 import argparse
+import json
 import time
 
 import torch
@@ -122,7 +123,22 @@ def run_benchmark(cache_dir: str | None = None):
     )
     save_dual_curve(result, filename)
 
-    return result
+    # Return metrics dictionary
+    metrics = {
+        "num_gpus": 1,
+        "num_sources": config.NUM_SOURCES,
+        "num_destinations": config.NUM_DESTINATIONS,
+        "target_sparsity": config.TARGET_SPARSITY,
+        "max_iter": config.MAX_ITER,
+        "solve_time": solve_time,
+        "dual_objective": float(result.dual_objective),
+        "primal_objective": float(result.objective_result.primal_objective.item()) if result.objective_result.primal_objective is not None else None,
+        "reg_penalty": float(result.objective_result.reg_penalty.item()),
+        "max_pos_slack": float(result.objective_result.max_pos_slack.item() if hasattr(result.objective_result.max_pos_slack, 'item') else result.objective_result.max_pos_slack),
+        "sum_pos_slack": float(result.objective_result.sum_pos_slack.item()),
+    }
+
+    return metrics
 
 
 if __name__ == "__main__":
@@ -145,6 +161,12 @@ if __name__ == "__main__":
         default=None,
         help=f"Maximum iterations (default: {config.MAX_ITER})",
     )
+    parser.add_argument(
+        "--json-output",
+        type=str,
+        default=None,
+        help="Save metrics to JSON file",
+    )
     args = parser.parse_args()
 
     # Override config if specified
@@ -153,4 +175,10 @@ if __name__ == "__main__":
     if args.max_iter is not None:
         config.MAX_ITER = args.max_iter
 
-    run_benchmark(cache_dir=args.cache_dir)
+    metrics = run_benchmark(cache_dir=args.cache_dir)
+
+    # Save metrics to JSON if requested
+    if args.json_output:
+        with open(args.json_output, "w") as f:
+            json.dump(metrics, f, indent=2)
+        print(f"\n📊 Metrics saved to {args.json_output}")

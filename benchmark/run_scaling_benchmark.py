@@ -24,7 +24,7 @@ Output CSV columns:
 
 import argparse
 import csv
-import re
+import json
 import subprocess
 import sys
 import time
@@ -53,80 +53,30 @@ INITIAL_STEP_SIZE = 1e-3
 MAX_STEP_SIZE = 1e-1
 
 
-def parse_benchmark_output(output: str) -> dict | None:
-    """
-    Parse benchmark output to extract metrics.
-
-    Looks for RESULTS section and extracts:
-    - Solve time
-    - Dual objective
-    - Primal objective
-    - Reg penalty
-    - Max positive slack
-    - Sum positive slack
-    """
-    try:
-        # Find RESULTS section
-        if "RESULTS" not in output:
-            return None
-
-        results = {}
-
-        # Extract solve time: "Solve time: 1.234s (5.67 ms/iter)"
-        match = re.search(r'Solve time:\s+([\d.]+)s', output)
-        if match:
-            results['solve_time'] = float(match.group(1))
-
-        # Extract dual objective: "Dual objective: -1234.567890"
-        match = re.search(r'Dual objective:\s+([-\d.]+)', output)
-        if match:
-            results['dual_objective'] = float(match.group(1))
-
-        # Extract primal objective: "Primal objective: -1234.567890"
-        match = re.search(r'Primal objective:\s+([-\d.]+)', output)
-        if match:
-            results['primal_objective'] = float(match.group(1))
-
-        # Extract reg penalty: "Reg penalty: 1234.567890"
-        match = re.search(r'Reg penalty:\s+([\d.]+)', output)
-        if match:
-            results['reg_penalty'] = float(match.group(1))
-
-        # Extract max positive slack: "Max positive slack: 1.23e-05"
-        match = re.search(r'Max positive slack:\s+([\d.eE+-]+)', output)
-        if match:
-            results['max_pos_slack'] = float(match.group(1))
-
-        # Extract sum positive slack: "Sum positive slack: 1.23e-05"
-        match = re.search(r'Sum positive slack:\s+([\d.eE+-]+)', output)
-        if match:
-            results['sum_pos_slack'] = float(match.group(1))
-
-        return results if results else None
-
-    except Exception as e:
-        print(f"Error parsing output: {e}")
-        return None
-
-
 def run_single_gpu_benchmark(num_sources: int, cache_dir: str | None = None) -> dict | None:
     """
-    Run single-GPU benchmark for given problem size via command-line invocation.
+    Run single-GPU benchmark for given problem size.
     """
     print(f"\n{'='*80}")
     print(f"Running SINGLE GPU benchmark: {num_sources:,} sources")
     print(f"{'='*80}")
 
-    cmd = [
-        sys.executable,
-        "run_matching_benchmark.py",
-        "--num-sources", str(num_sources),
-        "--max-iter", str(MAX_ITER),
-    ]
-    if cache_dir:
-        cmd.extend(["--cache-dir", cache_dir])
+    # Use a temporary JSON file for metrics
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        json_file = f.name
 
     try:
+        cmd = [
+            sys.executable,
+            "run_matching_benchmark.py",
+            "--num-sources", str(num_sources),
+            "--max-iter", str(MAX_ITER),
+            "--json-output", json_file,
+        ]
+        if cache_dir:
+            cmd.extend(["--cache-dir", cache_dir])
+
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -139,24 +89,18 @@ def run_single_gpu_benchmark(num_sources: int, cache_dir: str | None = None) -> 
             print(f"STDERR: {result.stderr}")
             return None
 
-        # Parse output
-        metrics = parse_benchmark_output(result.stdout)
-        if not metrics:
-            print(f"ERROR: Could not parse benchmark output")
-            return None
+        # Read metrics from JSON file
+        with open(json_file, 'r') as f:
+            metrics = json.load(f)
 
-        return {
-            "num_gpus": 1,
-            "num_sources": num_sources,
-            "num_destinations": NUM_DESTINATIONS,
-            "target_sparsity": TARGET_SPARSITY,
-            "max_iter": MAX_ITER,
-            **metrics,
-        }
+        return metrics
 
     except Exception as e:
         print(f"ERROR running benchmark: {e}")
         return None
+    finally:
+        # Clean up temp file
+        Path(json_file).unlink(missing_ok=True)
 
 
 def run_distributed_benchmark(num_sources: int, num_gpus: int, cache_dir: str | None = None) -> dict | None:
@@ -167,17 +111,23 @@ def run_distributed_benchmark(num_sources: int, num_gpus: int, cache_dir: str | 
     print(f"Running {num_gpus} GPU benchmark: {num_sources:,} sources")
     print(f"{'='*80}")
 
-    cmd = [
-        "torchrun",
-        f"--nproc_per_node={num_gpus}",
-        "run_matching_benchmark_dist.py",
-        "--num-sources", str(num_sources),
-        "--max-iter", str(MAX_ITER),
-    ]
-    if cache_dir:
-        cmd.extend(["--cache-dir", cache_dir])
+    # Use a temporary JSON file for metrics
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        json_file = f.name
 
     try:
+        cmd = [
+            "torchrun",
+            f"--nproc_per_node={num_gpus}",
+            "run_matching_benchmark_dist.py",
+            "--num-sources", str(num_sources),
+            "--max-iter", str(MAX_ITER),
+            "--json-output", json_file,
+        ]
+        if cache_dir:
+            cmd.extend(["--cache-dir", cache_dir])
+
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -190,24 +140,18 @@ def run_distributed_benchmark(num_sources: int, num_gpus: int, cache_dir: str | 
             print(f"STDERR: {result.stderr}")
             return None
 
-        # Parse output
-        metrics = parse_benchmark_output(result.stdout)
-        if not metrics:
-            print(f"ERROR: Could not parse benchmark output")
-            return None
+        # Read metrics from JSON file
+        with open(json_file, 'r') as f:
+            metrics = json.load(f)
 
-        return {
-            "num_gpus": num_gpus,
-            "num_sources": num_sources,
-            "num_destinations": NUM_DESTINATIONS,
-            "target_sparsity": TARGET_SPARSITY,
-            "max_iter": MAX_ITER,
-            **metrics,
-        }
+        return metrics
 
     except Exception as e:
         print(f"ERROR running benchmark: {e}")
         return None
+    finally:
+        # Clean up temp file
+        Path(json_file).unlink(missing_ok=True)
 
 
 def run_all_benchmarks(cache_dir: str | None = None, output_file: str = "scaling_results.csv"):
