@@ -3,9 +3,10 @@ Distributed multi-GPU benchmark for matching problem.
 Edit the CONFIG section below to change parameters.
 
 Usage:
-    torchrun --nproc_per_node=<num_gpus> benchmark/run_matching_benchmark_dist.py
+    torchrun --nproc_per_node=<num_gpus> benchmark/run_matching_benchmark_dist.py [--cache-dir DIR]
 """
 
+import argparse
 import time
 
 import torch
@@ -29,7 +30,7 @@ GAMMA = 1e-3
 # =============================================================================
 
 
-def run_benchmark():
+def run_benchmark(cache_dir: str | None = None):
     # Initialize distributed FIRST to get rank
     print("[1/4] Initializing distributed...")
     torch.distributed.init_process_group(backend="nccl")
@@ -51,6 +52,7 @@ def run_benchmark():
             dtype=config.DTYPE,
             seed=config.SEED,
             use_preconditioning=config.USE_PRECONDITIONING,
+            cache_dir=cache_dir,
         )
 
         print_config(
@@ -166,4 +168,12 @@ def run_benchmark():
 
 
 if __name__ == "__main__":
-    run_benchmark()
+    parser = argparse.ArgumentParser(description="Distributed multi-GPU benchmark for matching problem")
+    parser.add_argument(
+        "--cache-dir",
+        type=str,
+        default=None,
+        help="Directory for cached data (default: ./benchmark_data)",
+    )
+    args = parser.parse_args()
+    run_benchmark(cache_dir=args.cache_dir)

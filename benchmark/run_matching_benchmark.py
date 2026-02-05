@@ -3,6 +3,7 @@ Single-GPU benchmark for matching problem.
 Edit the CONFIG section below to change parameters.
 """
 
+import argparse
 import time
 
 import torch
@@ -42,7 +43,7 @@ def compute_initial_gamma():
 # =============================================================================
 
 
-def run_benchmark():
+def run_benchmark(cache_dir: str | None = None):
     device = torch.device("cuda:0" if USE_GPU else "cpu")
     initial_gamma = compute_initial_gamma()
 
@@ -71,6 +72,7 @@ def run_benchmark():
         dtype=config.DTYPE,
         seed=config.SEED,
         use_preconditioning=config.USE_PRECONDITIONING,
+        cache_dir=cache_dir,
     )
 
     # Create objective
@@ -124,4 +126,12 @@ def run_benchmark():
 
 
 if __name__ == "__main__":
-    run_benchmark()
+    parser = argparse.ArgumentParser(description="Single-GPU benchmark for matching problem")
+    parser.add_argument(
+        "--cache-dir",
+        type=str,
+        default=None,
+        help="Directory for cached data (default: ./benchmark_data)",
+    )
+    args = parser.parse_args()
+    run_benchmark(cache_dir=args.cache_dir)

@@ -20,6 +20,7 @@ def generate_benchmark_data(
     dtype,
     seed: int,
     use_preconditioning: bool = False,
+    cache_dir: str | None = None,
 ) -> tuple[MatchingInputArgs, float]:
     """
     Generate synthetic matching data with optional preconditioning.
@@ -32,6 +33,7 @@ def generate_benchmark_data(
         dtype: Data type for tensors
         seed: Random seed for reproducibility
         use_preconditioning: Whether to apply Jacobi preconditioning
+        cache_dir: Directory for cached data (None = default)
 
     Returns:
         Tuple of (input_args, generation_time)
@@ -45,6 +47,7 @@ def generate_benchmark_data(
         device=device,
         dtype=dtype,
         seed=seed,
+        cache_dir=cache_dir,
     )
     data_time = time.perf_counter() - t0
     print(f"      {data_time:.3f}s | NNZ: {input_args.A._nnz()}")

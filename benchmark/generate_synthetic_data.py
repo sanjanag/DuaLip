@@ -11,11 +11,11 @@ from dualip.projections import create_projection_map
 # Disk-backed cache config (via numpy.memmap)
 # -------------------------------------------------------------------------
 
-# Base directory for memmap files in benchmark directory
-_CACHE_DIR = os.path.join(os.path.dirname(__file__), "benchmark_data")
+# Default cache directory in benchmark directory
+_DEFAULT_CACHE_DIR = os.path.join(os.path.dirname(__file__), "benchmark_data")
 
 # Optional in-process cache to avoid re-mmapping within one process.
-# Maps cache_key -> (ccol_indices, row_indices, a_values, c_values, b_vec_np)
+# Maps (cache_dir, cache_key) -> (ccol_indices, row_indices, a_values, c_values, b_vec_np)
 _in_process_cache = {}
 
 
@@ -187,16 +187,16 @@ def _get_cache_prefix(cache_key: tuple) -> str:
     return f"s{num_sources}_d{num_destinations}_sp{target_sparsity}_{dtype_str.replace('torch.', '')}_seed{seed}"
 
 
-def _get_meta_path(cache_key: tuple) -> str:
+def _get_meta_path(cache_key: tuple, cache_dir: str) -> str:
     """Get metadata file path for a cache key."""
     prefix = _get_cache_prefix(cache_key)
-    return os.path.join(_CACHE_DIR, f"{prefix}_meta.json")
+    return os.path.join(cache_dir, f"{prefix}_meta.json")
 
 
-def _array_path(cache_key: tuple, suffix: str) -> str:
+def _array_path(cache_key: tuple, suffix: str, cache_dir: str) -> str:
     """Get array file path for a cache key and suffix (e.g., 'A_ccol')."""
     prefix = _get_cache_prefix(cache_key)
-    return os.path.join(_CACHE_DIR, f"{prefix}_{suffix}.dat")
+    return os.path.join(cache_dir, f"{prefix}_{suffix}.dat")
 
 
 def _save_array_to_memmap(path: str, arr: np.ndarray) -> None:
@@ -213,20 +213,21 @@ def _load_array_from_memmap(path: str, shape, dtype) -> np.memmap:
     return np.memmap(path, dtype=dtype, mode="r", shape=shape)
 
 
-def _load_cached_numpy(cache_key: tuple):
+def _load_cached_numpy(cache_key: tuple, cache_dir: str):
     """
     Try to load a cached instance (NumPy arrays) from in-process cache or memmap.
     Returns (ccol_indices, row_indices, a_values, c_values, b_vec_np) or None.
     """
     global _in_process_cache
 
-    # In-process cache first
-    if cache_key in _in_process_cache:
-        return _in_process_cache[cache_key]
+    # In-process cache first (keyed by both cache_dir and cache_key)
+    in_process_key = (cache_dir, cache_key)
+    if in_process_key in _in_process_cache:
+        return _in_process_cache[in_process_key]
 
     # Disk cache via metadata + memmaps
     try:
-        meta_path = _get_meta_path(cache_key)
+        meta_path = _get_meta_path(cache_key, cache_dir)
         with open(meta_path, "r") as f:
             meta = json.load(f)
 
@@ -245,27 +246,27 @@ def _load_cached_numpy(cache_key: tuple):
         dtypes_meta = {k: np.dtype(v) for k, v in meta["array_dtypes"].items()}
 
         ccol_np = _load_array_from_memmap(
-            _array_path(cache_key, "A_ccol"),
+            _array_path(cache_key, "A_ccol", cache_dir),
             tuple(shapes["A_ccol"]),
             dtypes_meta["A_ccol"],
         )
         row_np = _load_array_from_memmap(
-            _array_path(cache_key, "A_row"),
+            _array_path(cache_key, "A_row", cache_dir),
             tuple(shapes["A_row"]),
             dtypes_meta["A_row"],
         )
         A_vals_np = _load_array_from_memmap(
-            _array_path(cache_key, "A_vals"),
+            _array_path(cache_key, "A_vals", cache_dir),
             tuple(shapes["A_vals"]),
             dtypes_meta["A_vals"],
         )
         c_vals_np = _load_array_from_memmap(
-            _array_path(cache_key, "c_vals"),
+            _array_path(cache_key, "c_vals", cache_dir),
             tuple(shapes["c_vals"]),
             dtypes_meta["c_vals"],
         )
         b_vec_np = _load_array_from_memmap(
-            _array_path(cache_key, "b_vec"),
+            _array_path(cache_key, "b_vec", cache_dir),
             tuple(shapes["b_vec"]),
             dtypes_meta["b_vec"],
         )
@@ -278,7 +279,7 @@ def _load_cached_numpy(cache_key: tuple):
         b_vec = np.asarray(b_vec_np)
 
         result = (ccol, row, A_vals, c_vals, b_vec)
-        _in_process_cache[cache_key] = result
+        _in_process_cache[in_process_key] = result
         return result
 
     except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
@@ -292,6 +293,7 @@ def _save_cached_numpy(
     a_values: np.ndarray,
     c_values: np.ndarray,
     b_vec_np: np.ndarray,
+    cache_dir: str,
 ) -> None:
     """Save NumPy arrays + metadata to memmaps and update in-process cache."""
     global _in_process_cache
@@ -299,14 +301,14 @@ def _save_cached_numpy(
     num_sources, num_destinations, target_sparsity, dtype_str, seed = cache_key
 
     # Ensure cache directory exists
-    os.makedirs(_CACHE_DIR, exist_ok=True)
+    os.makedirs(cache_dir, exist_ok=True)
 
     # Save arrays to memmap files
-    _save_array_to_memmap(_array_path(cache_key, "A_ccol"), ccol_indices)
-    _save_array_to_memmap(_array_path(cache_key, "A_row"), row_indices)
-    _save_array_to_memmap(_array_path(cache_key, "A_vals"), a_values)
-    _save_array_to_memmap(_array_path(cache_key, "c_vals"), c_values)
-    _save_array_to_memmap(_array_path(cache_key, "b_vec"), b_vec_np)
+    _save_array_to_memmap(_array_path(cache_key, "A_ccol", cache_dir), ccol_indices)
+    _save_array_to_memmap(_array_path(cache_key, "A_row", cache_dir), row_indices)
+    _save_array_to_memmap(_array_path(cache_key, "A_vals", cache_dir), a_values)
+    _save_array_to_memmap(_array_path(cache_key, "c_vals", cache_dir), c_values)
+    _save_array_to_memmap(_array_path(cache_key, "b_vec", cache_dir), b_vec_np)
 
     # Save metadata
     meta = {
@@ -330,13 +332,14 @@ def _save_cached_numpy(
             "b_vec": str(b_vec_np.dtype),
         },
     }
-    meta_path = _get_meta_path(cache_key)
+    meta_path = _get_meta_path(cache_key, cache_dir)
     with open(meta_path, "w") as f:
         json.dump(meta, f, indent=2)
 
     # Update in-process cache
     result = (ccol_indices, row_indices, a_values, c_values, b_vec_np)
-    _in_process_cache[cache_key] = result
+    in_process_key = (cache_dir, cache_key)
+    _in_process_cache[in_process_key] = result
 
 
 # -------------------------------------------------------------------------
@@ -352,6 +355,7 @@ def generate_synthetic_matching_input_args(
     dtype: torch.dtype = torch.float32,
     seed: int | None = None,
     rng: np.random.Generator | None = None,
+    cache_dir: str | None = None,
 ) -> MatchingInputArgs:
     """
     Public API: generate a synthetic matching LP instance as MatchingInputArgs.
@@ -381,10 +385,12 @@ def generate_synthetic_matching_input_args(
         Random seed for reproducibility. If provided, enables caching.
     rng : np.random.Generator | None, default None
         Explicit RNG (overrides seed if provided). Bypasses caching.
+    cache_dir : str | None, default None
+        Directory for cached data. If None, uses default ./benchmark_data.
 
     Caching behavior
     ----------------
-    - If seed is provided and rng is None: uses disk cache in ./benchmark_data
+    - If seed is provided and rng is None: uses disk cache in cache_dir
       keyed by (num_sources, num_destinations, target_sparsity, dtype, seed).
       Data is generated with np.random.default_rng(seed) for reproducibility.
 
@@ -392,12 +398,16 @@ def generate_synthetic_matching_input_args(
 
     - If both seed and rng are None: bypasses cache and generates with unseeded RNG.
     """
+    # Determine cache directory
+    if cache_dir is None:
+        cache_dir = _DEFAULT_CACHE_DIR
+
     # Determine whether to use cache
     use_cache = (seed is not None) and (rng is None)
 
     if use_cache:
         cache_key = _get_cache_key(num_sources, num_destinations, target_sparsity, dtype, seed)
-        cached = _load_cached_numpy(cache_key)
+        cached = _load_cached_numpy(cache_key, cache_dir)
     else:
         cached = None
 
@@ -422,6 +432,7 @@ def generate_synthetic_matching_input_args(
                 a_values=a_values,
                 c_values=c_values,
                 b_vec_np=b_vec_np,
+                cache_dir=cache_dir,
             )
     else:
         ccol_indices, row_indices, a_values, c_values, b_vec_np = cached
