@@ -13,3 +13,7 @@ SEED = 42
 MAX_ITER = 1000
 INITIAL_STEP_SIZE = 1e-3
 MAX_STEP_SIZE = 1e-1
+
+# Ablation toggles
+USE_PRECONDITIONING = False  # Jacobi preconditioning
+BATCHING = False  # Objective batching

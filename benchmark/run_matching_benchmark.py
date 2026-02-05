@@ -19,7 +19,6 @@ from dualip.optimizers.agd import AcceleratedGradientDescent
 
 # Ablation toggles
 USE_GPU = True  # False = CPU, True = GPU
-USE_PRECONDITIONING = False  # Jacobi preconditioning
 USE_GAMMA_DECAY = False  # Regularization decay
 
 # Gamma settings
@@ -56,7 +55,7 @@ def run_benchmark():
         seed=config.SEED,
         gamma=FINAL_GAMMA,
         max_iter=config.MAX_ITER,
-        use_preconditioning=USE_PRECONDITIONING,
+        use_preconditioning=config.USE_PRECONDITIONING,
         device=device,
         use_gamma_decay=USE_GAMMA_DECAY,
         initial_gamma=initial_gamma if USE_GAMMA_DECAY else None,
@@ -70,7 +69,7 @@ def run_benchmark():
         num_destinations=config.NUM_DESTINATIONS,
         target_sparsity=config.TARGET_SPARSITY,
         device=device,
-        use_preconditioning=USE_PRECONDITIONING,
+        use_preconditioning=config.USE_PRECONDITIONING,
         rng=rng,
     )
 
@@ -80,7 +79,7 @@ def run_benchmark():
     objective = MatchingSolverDualObjectiveFunction(
         matching_input_args=input_args,
         gamma=initial_gamma,
-        batching=False,
+        batching=config.BATCHING,
     )
     obj_time = time.perf_counter() - t0
     print(f"      {obj_time:.3f}s")
@@ -115,7 +114,7 @@ def run_benchmark():
         target_sparsity=config.TARGET_SPARSITY,
         gamma=FINAL_GAMMA,
         max_iter=config.MAX_ITER,
-        use_preconditioning=USE_PRECONDITIONING,
+        use_preconditioning=config.USE_PRECONDITIONING,
         gamma_decay_factor=GAMMA_DECAY_FACTOR if USE_GAMMA_DECAY else None,
         gamma_decay_steps=GAMMA_DECAY_STEPS if USE_GAMMA_DECAY else None,
     )

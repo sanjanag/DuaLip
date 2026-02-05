@@ -24,9 +24,6 @@ from dualip.utils.dist_utils import global_to_local_projection_map, split_tensor
 # Gamma setting
 GAMMA = 1e-3
 
-# Ablation toggles
-USE_PRECONDITIONING = False  # Jacobi preconditioning
-
 # =============================================================================
 # END CONFIG
 # =============================================================================
@@ -43,7 +40,7 @@ def run_benchmark():
         num_destinations=config.NUM_DESTINATIONS,
         target_sparsity=config.TARGET_SPARSITY,
         device="cpu",  # Use CPU for data generation
-        use_preconditioning=USE_PRECONDITIONING,
+        use_preconditioning=config.USE_PRECONDITIONING,
         rng=rng,
     )
 
@@ -66,7 +63,7 @@ def run_benchmark():
             seed=config.SEED,
             gamma=GAMMA,
             max_iter=config.MAX_ITER,
-            use_preconditioning=USE_PRECONDITIONING,
+            use_preconditioning=config.USE_PRECONDITIONING,
             world_size=world_size,
         )
         print("[3/4] Splitting data on CPU...")
@@ -96,7 +93,7 @@ def run_benchmark():
         b_vec=input_args.b_vec,
         gamma=GAMMA,
         host_device="cuda:0",
-        batching=False,
+        batching=config.BATCHING,
     )
     obj_time = time.perf_counter() - t0
     if rank == 0:
@@ -143,7 +140,7 @@ def run_benchmark():
             target_sparsity=config.TARGET_SPARSITY,
             gamma=GAMMA,
             max_iter=config.MAX_ITER,
-            use_preconditioning=USE_PRECONDITIONING,
+            use_preconditioning=config.USE_PRECONDITIONING,
         )
         save_dual_curve(result, filename)
 
