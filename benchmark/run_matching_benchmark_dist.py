@@ -10,9 +10,8 @@ import argparse
 import json
 import time
 
-import torch
-
 import config
+import torch
 from benchmark_utils import generate_benchmark_data, get_output_filename, print_config, print_results, save_dual_curve
 
 from dualip.objectives.matching import MatchingInputArgs, MatchingSolverDualObjectiveFunctionDistributed
@@ -174,9 +173,17 @@ def run_benchmark(cache_dir: str | None = None):
             "max_iter": config.MAX_ITER,
             "solve_time": solve_time,
             "dual_objective": float(result.dual_objective),
-            "primal_objective": float(result.objective_result.primal_objective.item()) if result.objective_result.primal_objective is not None else None,
+            "primal_objective": (
+                float(result.objective_result.primal_objective.item())
+                if result.objective_result.primal_objective is not None
+                else None
+            ),
             "reg_penalty": float(result.objective_result.reg_penalty.item()),
-            "max_pos_slack": float(result.objective_result.max_pos_slack.item() if hasattr(result.objective_result.max_pos_slack, 'item') else result.objective_result.max_pos_slack),
+            "max_pos_slack": float(
+                result.objective_result.max_pos_slack.item()
+                if hasattr(result.objective_result.max_pos_slack, "item")
+                else result.objective_result.max_pos_slack
+            ),
             "sum_pos_slack": float(result.objective_result.sum_pos_slack.item()),
         }
 

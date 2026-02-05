@@ -27,22 +27,20 @@ import csv
 import json
 import subprocess
 import sys
-import time
 from pathlib import Path
-
 
 # Benchmark configuration
 SOURCE_SIZES = [
-    25_000_000,     # 25M
-    50_000_000,     # 50M
-    75_000_000,     # 75M
-    100_000_000,    # 100M
-    125_000_000,    # 125M
-    150_000_000,    # 150M
-    175_000_000,    # 175M
-    200_000_000,    # 200M
-    225_000_000,    # 225M
-    250_000_000,    # 250M
+    25_000_000,  # 25M
+    50_000_000,  # 50M
+    75_000_000,  # 75M
+    100_000_000,  # 100M
+    125_000_000,  # 125M
+    150_000_000,  # 150M
+    175_000_000,  # 175M
+    200_000_000,  # 200M
+    225_000_000,  # 225M
+    250_000_000,  # 250M
 ]
 
 NUM_DESTINATIONS = 10_000
@@ -67,16 +65,20 @@ def run_single_gpu_benchmark(num_sources: int, cache_dir: str | None = None) -> 
 
     # Use a temporary JSON file for metrics
     import tempfile
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         json_file = f.name
 
     try:
         cmd = [
             sys.executable,
             "run_matching_benchmark.py",
-            "--num-sources", str(num_sources),
-            "--max-iter", str(MAX_ITER),
-            "--json-output", json_file,
+            "--num-sources",
+            str(num_sources),
+            "--max-iter",
+            str(MAX_ITER),
+            "--json-output",
+            json_file,
         ]
         if cache_dir:
             cmd.extend(["--cache-dir", cache_dir])
@@ -94,7 +96,7 @@ def run_single_gpu_benchmark(num_sources: int, cache_dir: str | None = None) -> 
             return None
 
         # Read metrics from JSON file
-        with open(json_file, 'r') as f:
+        with open(json_file, "r") as f:
             metrics = json.load(f)
 
         return metrics
@@ -117,7 +119,8 @@ def run_distributed_benchmark(num_sources: int, num_gpus: int, cache_dir: str | 
 
     # Use a temporary JSON file for metrics
     import tempfile
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         json_file = f.name
 
     try:
@@ -125,9 +128,12 @@ def run_distributed_benchmark(num_sources: int, num_gpus: int, cache_dir: str | 
             "torchrun",
             f"--nproc_per_node={num_gpus}",
             "run_matching_benchmark_dist.py",
-            "--num-sources", str(num_sources),
-            "--max-iter", str(MAX_ITER),
-            "--json-output", json_file,
+            "--num-sources",
+            str(num_sources),
+            "--max-iter",
+            str(MAX_ITER),
+            "--json-output",
+            json_file,
         ]
         if cache_dir:
             cmd.extend(["--cache-dir", cache_dir])
@@ -145,7 +151,7 @@ def run_distributed_benchmark(num_sources: int, num_gpus: int, cache_dir: str | 
             return None
 
         # Read metrics from JSON file
-        with open(json_file, 'r') as f:
+        with open(json_file, "r") as f:
             metrics = json.load(f)
 
         return metrics
@@ -165,7 +171,7 @@ def run_all_benchmarks(cache_dir: str | None = None, output_file: str = "scaling
     results = []
 
     print(f"\n{'#'*80}")
-    print(f"# SCALING BENCHMARK")
+    print("# SCALING BENCHMARK")
     print(f"# Source sizes: {[f'{s:,}' for s in SOURCE_SIZES]}")
     print(f"# GPU counts: {GPU_COUNTS}")
     print(f"# Max iterations: {MAX_ITER:,}")
@@ -198,10 +204,11 @@ def run_all_benchmarks(cache_dir: str | None = None, output_file: str = "scaling
                 print(f"\n✗ ERROR: {num_sources:,} sources, {num_gpus} GPU(s)")
                 print(f"  Exception: {e}")
                 import traceback
+
                 traceback.print_exc()
 
     print(f"\n{'#'*80}")
-    print(f"# BENCHMARK COMPLETE")
+    print("# BENCHMARK COMPLETE")
     print(f"# Results saved to: {output_file}")
     print(f"{'#'*80}\n")
 
@@ -227,7 +234,7 @@ def save_results(results: list[dict], output_file: str):
         "sum_pos_slack",
     ]
 
-    with open(output_file, 'w', newline='') as f:
+    with open(output_file, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(results)

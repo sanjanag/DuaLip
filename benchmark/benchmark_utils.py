@@ -5,7 +5,6 @@ Shared utilities for benchmarking.
 import csv
 import time
 
-import torch
 from generate_synthetic_data import generate_synthetic_matching_input_args
 
 from dualip.objectives.matching import MatchingInputArgs
@@ -169,10 +168,7 @@ def print_results(result, solve_time: float, max_iter: int):
     print(f"  Dual objective: {result.dual_objective:.6f}")
 
     # Primal objective may not be available in distributed mode
-    if (
-        hasattr(result.objective_result, "primal_objective")
-        and result.objective_result.primal_objective is not None
-    ):
+    if hasattr(result.objective_result, "primal_objective") and result.objective_result.primal_objective is not None:
         print(f"  Primal objective: {result.objective_result.primal_objective.item():.6f}")
 
     print(f"  Reg penalty: {result.objective_result.reg_penalty.item():.6f}")

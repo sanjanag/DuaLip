@@ -1,10 +1,6 @@
-import pytest
 import torch
 
-from dualip.objectives.matching import (
-    MatchingInputArgs,
-    MatchingSolverDualObjectiveFunction,
-)
+from dualip.objectives.matching import MatchingInputArgs, MatchingSolverDualObjectiveFunction
 from dualip.optimizers.agd import AcceleratedGradientDescent
 from dualip.projections.base import create_projection_map
 
