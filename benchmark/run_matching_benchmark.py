@@ -133,5 +133,24 @@ if __name__ == "__main__":
         default=None,
         help="Directory for cached data (default: ./benchmark_data)",
     )
+    parser.add_argument(
+        "--num-sources",
+        type=int,
+        default=None,
+        help=f"Number of sources (default: {config.NUM_SOURCES})",
+    )
+    parser.add_argument(
+        "--max-iter",
+        type=int,
+        default=None,
+        help=f"Maximum iterations (default: {config.MAX_ITER})",
+    )
     args = parser.parse_args()
+
+    # Override config if specified
+    if args.num_sources is not None:
+        config.NUM_SOURCES = args.num_sources
+    if args.max_iter is not None:
+        config.MAX_ITER = args.max_iter
+
     run_benchmark(cache_dir=args.cache_dir)
