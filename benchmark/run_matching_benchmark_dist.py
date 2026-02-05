@@ -34,6 +34,14 @@ def run_benchmark():
 
     # Generate data BEFORE initializing distributed
     # (Each process will generate identical data with same seed)
+    #
+    # NOTE: This approach is feasible for small-to-medium datasets where full data
+    # generation on each process is acceptable. For large-scale datasets, this results
+    # in redundant computation (N processes doing the same work). In production scenarios
+    # with very large datasets, consider:
+    # 1. Pre-generating and saving data to disk, then loading shards per process
+    # 2. Having only rank 0 generate data and broadcast to other ranks
+    # 3. Generating sharded data directly per process (different indices per rank)
     print("\n[1/4] Generating data...")
     input_args, data_time = generate_benchmark_data(
         num_sources=config.NUM_SOURCES,
