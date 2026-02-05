@@ -164,6 +164,9 @@ def run_benchmark(cache_dir: str | None = None):
         )
         save_dual_curve(result, filename)
 
+    # Clean up distributed process group
+    torch.distributed.destroy_process_group()
+
     return result
 
 
