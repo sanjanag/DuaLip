@@ -8,30 +8,15 @@ from dualip.objectives.matching import MatchingInputArgs
 from dualip.projections import create_projection_map
 
 # -------------------------------------------------------------------------
-# RAM-backed cache config (via /dev/shm + numpy.memmap)
+# Disk-backed cache config (via numpy.memmap)
 # -------------------------------------------------------------------------
 
-# Base directory for memmap files: /dev/shm if available (tmpfs = RAM),
-# otherwise current directory.
-_default_cache_dir = "/dev/shm"
-if not os.path.isdir(_default_cache_dir):
-    _default_cache_dir = "."
-
-_CACHE_DIR = os.environ.get("MATCHING_SYNTH_CACHE_DIR", _default_cache_dir)
-
-# Metadata file describing shapes/dtypes and parameters used.
-_SHM_META_PATH = os.path.join(_CACHE_DIR, "matching_synth_meta.json")
-
-# Filenames for the single cached instance (only ONE at a time).
-_FN_A_CCOL = "matching_synth_A_ccol.dat"
-_FN_A_ROW = "matching_synth_A_row.dat"
-_FN_A_VALS = "matching_synth_A_vals.dat"
-_FN_C_VALS = "matching_synth_c_vals.dat"
-_FN_B_VEC = "matching_synth_b_vec.dat"
+# Base directory for memmap files in benchmark directory
+_CACHE_DIR = os.path.join(os.path.dirname(__file__), "benchmark_data")
 
 # Optional in-process cache to avoid re-mmapping within one process.
-_cached_key = None
-_cached_base_numpy = None  # (ccol_indices, row_indices, a_values, c_values, b_vec_np)
+# Maps cache_key -> (ccol_indices, row_indices, a_values, c_values, b_vec_np)
+_in_process_cache = {}
 
 
 # -------------------------------------------------------------------------
@@ -184,8 +169,34 @@ def _generate_matching_numpy(
 # -------------------------------------------------------------------------
 
 
-def _array_path(fname: str) -> str:
-    return os.path.join(_CACHE_DIR, fname)
+def _get_cache_key(
+    num_sources: int,
+    num_destinations: int,
+    target_sparsity: float,
+    dtype: torch.dtype,
+    seed: int,
+) -> tuple:
+    """Generate cache key tuple from parameters."""
+    return (int(num_sources), int(num_destinations), float(target_sparsity), str(dtype), int(seed))
+
+
+def _get_cache_prefix(cache_key: tuple) -> str:
+    """Generate filename prefix from cache key."""
+    num_sources, num_destinations, target_sparsity, dtype_str, seed = cache_key
+    # Create a compact but readable prefix
+    return f"s{num_sources}_d{num_destinations}_sp{target_sparsity}_{dtype_str.replace('torch.', '')}_seed{seed}"
+
+
+def _get_meta_path(cache_key: tuple) -> str:
+    """Get metadata file path for a cache key."""
+    prefix = _get_cache_prefix(cache_key)
+    return os.path.join(_CACHE_DIR, f"{prefix}_meta.json")
+
+
+def _array_path(cache_key: tuple, suffix: str) -> str:
+    """Get array file path for a cache key and suffix (e.g., 'A_ccol')."""
+    prefix = _get_cache_prefix(cache_key)
+    return os.path.join(_CACHE_DIR, f"{prefix}_{suffix}.dat")
 
 
 def _save_array_to_memmap(path: str, arr: np.ndarray) -> None:
@@ -202,83 +213,80 @@ def _load_array_from_memmap(path: str, shape, dtype) -> np.memmap:
     return np.memmap(path, dtype=dtype, mode="r", shape=shape)
 
 
-def _load_cached_numpy(
-    num_sources: int,
-    num_destinations: int,
-    target_sparsity: float,
-):
+def _load_cached_numpy(cache_key: tuple):
     """
     Try to load a cached instance (NumPy arrays) from in-process cache or memmap.
     Returns (ccol_indices, row_indices, a_values, c_values, b_vec_np) or None.
     """
-    global _cached_key, _cached_base_numpy
-
-    key = (int(num_sources), int(num_destinations), float(target_sparsity))
+    global _in_process_cache
 
     # In-process cache first
-    if _cached_key == key and _cached_base_numpy is not None:
-        return _cached_base_numpy
+    if cache_key in _in_process_cache:
+        return _in_process_cache[cache_key]
 
-    # Cross-process cache via metadata + memmaps
+    # Disk cache via metadata + memmaps
     try:
-        with open(_SHM_META_PATH, "r") as f:
+        meta_path = _get_meta_path(cache_key)
+        with open(meta_path, "r") as f:
             meta = json.load(f)
 
+        # Validate metadata matches cache key
+        num_sources, num_destinations, target_sparsity, dtype_str, seed = cache_key
         if (
             int(meta.get("num_sources", -1)) != int(num_sources)
             or int(meta.get("num_destinations", -1)) != int(num_destinations)
             or float(meta.get("target_sparsity", -1.0)) != float(target_sparsity)
+            or str(meta.get("dtype", "")) != dtype_str
+            or int(meta.get("seed", -1)) != int(seed)
         ):
             return None
 
         shapes = meta["shapes"]
-        dtypes_meta = {k: np.dtype(v) for k, v in meta["dtypes"].items()}
+        dtypes_meta = {k: np.dtype(v) for k, v in meta["array_dtypes"].items()}
 
         ccol_np = _load_array_from_memmap(
-            _array_path(_FN_A_CCOL),
+            _array_path(cache_key, "A_ccol"),
             tuple(shapes["A_ccol"]),
             dtypes_meta["A_ccol"],
         )
         row_np = _load_array_from_memmap(
-            _array_path(_FN_A_ROW),
+            _array_path(cache_key, "A_row"),
             tuple(shapes["A_row"]),
             dtypes_meta["A_row"],
         )
         A_vals_np = _load_array_from_memmap(
-            _array_path(_FN_A_VALS),
+            _array_path(cache_key, "A_vals"),
             tuple(shapes["A_vals"]),
             dtypes_meta["A_vals"],
         )
         c_vals_np = _load_array_from_memmap(
-            _array_path(_FN_C_VALS),
+            _array_path(cache_key, "c_vals"),
             tuple(shapes["c_vals"]),
             dtypes_meta["c_vals"],
         )
         b_vec_np = _load_array_from_memmap(
-            _array_path(_FN_B_VEC),
+            _array_path(cache_key, "b_vec"),
             tuple(shapes["b_vec"]),
             dtypes_meta["b_vec"],
         )
 
-        # Convert memmaps to normal ndarrays (or leave as memmaps if you like)
+        # Convert memmaps to normal ndarrays
         ccol = np.asarray(ccol_np)
         row = np.asarray(row_np)
         A_vals = np.asarray(A_vals_np)
         c_vals = np.asarray(c_vals_np)
         b_vec = np.asarray(b_vec_np)
 
-        _cached_key = key
-        _cached_base_numpy = (ccol, row, A_vals, c_vals, b_vec)
-        return _cached_base_numpy
+        result = (ccol, row, A_vals, c_vals, b_vec)
+        _in_process_cache[cache_key] = result
+        return result
 
     except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
         return None
 
 
 def _save_cached_numpy(
-    num_sources: int,
-    num_destinations: int,
-    target_sparsity: float,
+    cache_key: tuple,
     ccol_indices: np.ndarray,
     row_indices: np.ndarray,
     a_values: np.ndarray,
@@ -286,20 +294,27 @@ def _save_cached_numpy(
     b_vec_np: np.ndarray,
 ) -> None:
     """Save NumPy arrays + metadata to memmaps and update in-process cache."""
-    global _cached_key, _cached_base_numpy
+    global _in_process_cache
 
-    key = (int(num_sources), int(num_destinations), float(target_sparsity))
+    num_sources, num_destinations, target_sparsity, dtype_str, seed = cache_key
 
-    _save_array_to_memmap(_array_path(_FN_A_CCOL), ccol_indices)
-    _save_array_to_memmap(_array_path(_FN_A_ROW), row_indices)
-    _save_array_to_memmap(_array_path(_FN_A_VALS), a_values)
-    _save_array_to_memmap(_array_path(_FN_C_VALS), c_values)
-    _save_array_to_memmap(_array_path(_FN_B_VEC), b_vec_np)
+    # Ensure cache directory exists
+    os.makedirs(_CACHE_DIR, exist_ok=True)
 
+    # Save arrays to memmap files
+    _save_array_to_memmap(_array_path(cache_key, "A_ccol"), ccol_indices)
+    _save_array_to_memmap(_array_path(cache_key, "A_row"), row_indices)
+    _save_array_to_memmap(_array_path(cache_key, "A_vals"), a_values)
+    _save_array_to_memmap(_array_path(cache_key, "c_vals"), c_values)
+    _save_array_to_memmap(_array_path(cache_key, "b_vec"), b_vec_np)
+
+    # Save metadata
     meta = {
         "num_sources": int(num_sources),
         "num_destinations": int(num_destinations),
         "target_sparsity": float(target_sparsity),
+        "dtype": dtype_str,
+        "seed": int(seed),
         "shapes": {
             "A_ccol": list(ccol_indices.shape),
             "A_row": list(row_indices.shape),
@@ -307,7 +322,7 @@ def _save_cached_numpy(
             "c_vals": list(c_values.shape),
             "b_vec": list(b_vec_np.shape),
         },
-        "dtypes": {
+        "array_dtypes": {
             "A_ccol": str(ccol_indices.dtype),
             "A_row": str(row_indices.dtype),
             "A_vals": str(a_values.dtype),
@@ -315,12 +330,13 @@ def _save_cached_numpy(
             "b_vec": str(b_vec_np.dtype),
         },
     }
-    os.makedirs(os.path.dirname(_SHM_META_PATH), exist_ok=True)
-    with open(_SHM_META_PATH, "w") as f:
-        json.dump(meta, f)
+    meta_path = _get_meta_path(cache_key)
+    with open(meta_path, "w") as f:
+        json.dump(meta, f, indent=2)
 
-    _cached_key = key
-    _cached_base_numpy = (ccol_indices, row_indices, a_values, c_values, b_vec_np)
+    # Update in-process cache
+    result = (ccol_indices, row_indices, a_values, c_values, b_vec_np)
+    _in_process_cache[cache_key] = result
 
 
 # -------------------------------------------------------------------------
@@ -334,6 +350,7 @@ def generate_synthetic_matching_input_args(
     target_sparsity: float,
     device: str = "cpu",
     dtype: torch.dtype = torch.float32,
+    seed: int | None = None,
     rng: np.random.Generator | None = None,
 ) -> MatchingInputArgs:
     """
@@ -348,23 +365,47 @@ def generate_synthetic_matching_input_args(
 
     target_sparsity ~ fraction of nonzero entries out of (num_destinations * num_sources).
 
+    Parameters
+    ----------
+    num_sources : int
+        Number of source nodes
+    num_destinations : int
+        Number of destination nodes
+    target_sparsity : float
+        Target fraction of nonzero entries
+    device : str, default "cpu"
+        Device to place tensors on
+    dtype : torch.dtype, default torch.float32
+        Dtype for output tensors
+    seed : int | None, default None
+        Random seed for reproducibility. If provided, enables caching.
+    rng : np.random.Generator | None, default None
+        Explicit RNG (overrides seed if provided). Bypasses caching.
+
     Caching behavior
     ----------------
-    - If rng is None: use a cache keyed by
-        (num_sources, num_destinations, target_sparsity).
-      The cache is backed by memmap files in _CACHE_DIR (typically /dev/shm),
-      plus a tiny JSON metadata file. This works across Python processes.
+    - If seed is provided and rng is None: uses disk cache in ./benchmark_data
+      keyed by (num_sources, num_destinations, target_sparsity, dtype, seed).
+      Data is generated with np.random.default_rng(seed) for reproducibility.
 
-    - If rng is not None: bypass cache entirely and generate fresh data.
+    - If rng is provided: bypasses cache entirely and uses the provided RNG.
+
+    - If both seed and rng are None: bypasses cache and generates with unseeded RNG.
     """
-    # Try cache first if rng is None
-    if rng is None:
-        cached = _load_cached_numpy(num_sources, num_destinations, target_sparsity)
+    # Determine whether to use cache
+    use_cache = (seed is not None) and (rng is None)
+
+    if use_cache:
+        cache_key = _get_cache_key(num_sources, num_destinations, target_sparsity, dtype, seed)
+        cached = _load_cached_numpy(cache_key)
     else:
         cached = None
 
     if cached is None:
-        # Cache miss or rng explicitly provided: generate fresh arrays
+        # Cache miss or caching disabled: generate fresh arrays
+        if rng is None and seed is not None:
+            rng = np.random.default_rng(seed)
+
         ccol_indices, row_indices, a_values, c_values, b_vec_np = _generate_matching_numpy(
             num_sources=num_sources,
             num_destinations=num_destinations,
@@ -372,12 +413,10 @@ def generate_synthetic_matching_input_args(
             rng=rng,
         )
 
-        # Save to cache if rng is None
-        if rng is None:
+        # Save to cache if using cache
+        if use_cache:
             _save_cached_numpy(
-                num_sources=num_sources,
-                num_destinations=num_destinations,
-                target_sparsity=target_sparsity,
+                cache_key=cache_key,
                 ccol_indices=ccol_indices,
                 row_indices=row_indices,
                 a_values=a_values,

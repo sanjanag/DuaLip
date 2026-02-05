@@ -17,8 +17,9 @@ def generate_benchmark_data(
     num_destinations: int,
     target_sparsity: float,
     device: str,
+    dtype,
+    seed: int,
     use_preconditioning: bool = False,
-    rng=None,
 ) -> tuple[MatchingInputArgs, float]:
     """
     Generate synthetic matching data with optional preconditioning.
@@ -28,8 +29,9 @@ def generate_benchmark_data(
         num_destinations: Number of destination nodes
         target_sparsity: Target sparsity for the constraint matrix
         device: Device to generate data on
+        dtype: Data type for tensors
+        seed: Random seed for reproducibility
         use_preconditioning: Whether to apply Jacobi preconditioning
-        rng: Random number generator (optional)
 
     Returns:
         Tuple of (input_args, generation_time)
@@ -41,7 +43,8 @@ def generate_benchmark_data(
         num_destinations=num_destinations,
         target_sparsity=target_sparsity,
         device=device,
-        rng=rng,
+        dtype=dtype,
+        seed=seed,
     )
     data_time = time.perf_counter() - t0
     print(f"      {data_time:.3f}s | NNZ: {input_args.A._nnz()}")

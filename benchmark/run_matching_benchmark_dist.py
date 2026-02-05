@@ -30,40 +30,29 @@ GAMMA = 1e-3
 
 
 def run_benchmark():
-    rng = None  # np.random.default_rng(config.SEED)
-
-    # Generate data BEFORE initializing distributed
-    # (Each process will generate identical data with same seed)
-    #
-    # NOTE: This approach is feasible for small-to-medium datasets where full data
-    # generation on each process is acceptable. For large-scale datasets, this results
-    # in redundant computation (N processes doing the same work). In production scenarios
-    # with very large datasets, consider:
-    # 1. Pre-generating and saving data to disk, then loading shards per process
-    # 2. Having only rank 0 generate data and broadcast to other ranks
-    # 3. Generating sharded data directly per process (different indices per rank)
-    print("\n[1/4] Generating data...")
-    input_args, data_time = generate_benchmark_data(
-        num_sources=config.NUM_SOURCES,
-        num_destinations=config.NUM_DESTINATIONS,
-        target_sparsity=config.TARGET_SPARSITY,
-        device="cpu",  # Use CPU for data generation
-        use_preconditioning=config.USE_PRECONDITIONING,
-        rng=rng,
-    )
-
-    # Initialize distributed
-    print("[2/4] Initializing distributed...")
+    # Initialize distributed FIRST to get rank
+    print("[1/4] Initializing distributed...")
     torch.distributed.init_process_group(backend="nccl")
     rank = torch.distributed.get_rank()
     world_size = torch.distributed.get_world_size()
 
     # Each rank sets its device
-    device = f"cuda:{rank}"
-    torch.cuda.set_device(rank)
+    device = torch.device(f"cuda:{rank}")
+    torch.cuda.set_device(device)
 
-    # Print configuration (rank 0 only)
+    # Only rank 0 generates and splits data to avoid redundant computation
     if rank == 0:
+        print("[2/4] Generating data on rank 0...")
+        input_args, data_time = generate_benchmark_data(
+            num_sources=config.NUM_SOURCES,
+            num_destinations=config.NUM_DESTINATIONS,
+            target_sparsity=config.TARGET_SPARSITY,
+            device="cpu",  # Use CPU for data generation
+            dtype=config.DTYPE,
+            seed=config.SEED,
+            use_preconditioning=config.USE_PRECONDITIONING,
+        )
+
         print_config(
             num_sources=config.NUM_SOURCES,
             num_destinations=config.NUM_DESTINATIONS,
@@ -74,42 +63,63 @@ def run_benchmark():
             use_preconditioning=config.USE_PRECONDITIONING,
             world_size=world_size,
         )
-        print("[3/4] Splitting data on CPU...")
 
-    # Split data on CPU ONLY (don't move to GPUs)
-    # Pass CPU devices to split data while keeping it on CPU
-    cpu_devices = ["cpu"] * world_size
-    A_splits, c_splits, split_index_map = split_tensors_to_devices(input_args.A, input_args.c, cpu_devices)
+        print("[3/4] Splitting data on rank 0...")
+        # Split data on CPU ONLY (don't move to GPUs)
+        cpu_devices = ["cpu"] * world_size
+        A_splits, c_splits, split_index_map = split_tensors_to_devices(input_args.A, input_args.c, cpu_devices)
 
-    # Each rank takes ONLY its own partition and moves to its own GPU
-    A_local = A_splits[rank].to(device)
-    c_local = c_splits[rank].to(device)
-    pm_local = global_to_local_projection_map(input_args.projection_map, split_index_map[rank])
+        # Create local input args for each rank (b_vec=None for local partitions)
+        local_input_args_list = []
+        for r in range(world_size):
+            pm_local = global_to_local_projection_map(input_args.projection_map, split_index_map[r])
+            local_input_args_list.append(
+                MatchingInputArgs(
+                    A=A_splits[r],
+                    c=c_splits[r],
+                    projection_map=pm_local,
+                    b_vec=None,
+                    equality_mask=input_args.equality_mask,
+                )
+            )
+        b_vec_cpu = input_args.b_vec
 
-    # Create local input args (b_vec=None for local partition)
+        print("      Scattering partitions to all ranks...")
+    else:
+        local_input_args_list = None
+        b_vec_cpu = None
+
+    # Scatter: each rank receives only its own partition
+    local_input_args_recv = [None]
+    torch.distributed.scatter_object_list(local_input_args_recv, local_input_args_list, src=0)
+    local_input_args_cpu = local_input_args_recv[0]
+
+    # Broadcast b_vec to all ranks (small, shared across all ranks)
+    b_vec_list = [b_vec_cpu]
+    torch.distributed.broadcast_object_list(b_vec_list, src=0)
+    b_vec_cpu = b_vec_list[0]
+
+    # Move local partition to GPU
     local_input_args = MatchingInputArgs(
-        A=A_local, c=c_local, projection_map=pm_local, b_vec=None, equality_mask=input_args.equality_mask
+        A=local_input_args_cpu.A.to(device),
+        c=local_input_args_cpu.c.to(device),
+        projection_map=local_input_args_cpu.projection_map,
+        b_vec=None,
+        equality_mask=local_input_args_cpu.equality_mask,
     )
 
     # Create distributed objective with local data
     # host_device is cuda:0 for aggregation (all ranks send results there)
-    if rank == 0:
-        print("[4/4] Creating objective...")
-    t0 = time.perf_counter()
+
     objective = MatchingSolverDualObjectiveFunctionDistributed(
         local_matching_input_args=local_input_args,
-        b_vec=input_args.b_vec,
+        b_vec=b_vec_cpu,
         gamma=GAMMA,
         host_device="cuda:0",
         batching=config.BATCHING,
     )
-    obj_time = time.perf_counter() - t0
-    if rank == 0:
-        print(f"      {obj_time:.3f}s")
 
     # Create solver
-    if rank == 0:
-        print("Running solver...")
     solver = AcceleratedGradientDescent(
         max_iter=config.MAX_ITER,
         gamma=GAMMA,
@@ -119,7 +129,7 @@ def run_benchmark():
     )
 
     # Initialize dual variables on each rank's device (for broadcast to work)
-    initial_dual = torch.zeros_like(input_args.b_vec).to(device)
+    initial_dual = torch.zeros_like(b_vec_cpu).to(device)
 
     # Synchronize all ranks before timing to ensure fair measurement
     torch.distributed.barrier()

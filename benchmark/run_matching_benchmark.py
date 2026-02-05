@@ -43,8 +43,7 @@ def compute_initial_gamma():
 
 
 def run_benchmark():
-    device = "cuda:0" if USE_GPU else "cpu"
-    rng = None  # np.random.default_rng(config.SEED)
+    device = torch.device("cuda:0" if USE_GPU else "cpu")
     initial_gamma = compute_initial_gamma()
 
     # Print configuration
@@ -69,8 +68,9 @@ def run_benchmark():
         num_destinations=config.NUM_DESTINATIONS,
         target_sparsity=config.TARGET_SPARSITY,
         device=device,
+        dtype=config.DTYPE,
+        seed=config.SEED,
         use_preconditioning=config.USE_PRECONDITIONING,
-        rng=rng,
     )
 
     # Create objective
