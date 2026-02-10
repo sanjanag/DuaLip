@@ -57,7 +57,7 @@ class MIPLIB2017ObjectiveFunction(BaseObjective):
         else:
             self.row_norms = None
 
-    def calculate(self, dual_val: torch.Tensor, gamma: float, save_primal: bool = False) -> ObjectiveResult:
+    def calculate(self, dual_val: torch.Tensor, gamma: float, save_primal: bool = False, **kwargs) -> ObjectiveResult:
         """
         Compute dual gradient, objective, and reg penalty.
 

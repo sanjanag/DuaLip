@@ -11,7 +11,7 @@ class Quadratic1DObjective:
         self.dual_dimensionality = 1
         self.equality_mask: bool = None
 
-    def calculate(self, dual_val: torch.tensor, save_primal=False):
+    def calculate(self, dual_val: torch.tensor, save_primal=False, **kwargs):
         """
         Implements the 1D quadratic objective:
           f(x) = -(x - 3.0)^2
@@ -31,7 +31,7 @@ class SimpleObjective:
         self.dual_dimensionality = 2
         self.equality_mask: bool = None
 
-    def calculate(self, dual_val: torch.tensor, save_primal=False):
+    def calculate(self, dual_val: torch.tensor, save_primal=False, **kwargs):
         """
         Implements the 2D objective:
           f(x, y) = -(x - 3)^2 - (y + 5)^2

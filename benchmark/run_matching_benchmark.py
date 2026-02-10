@@ -3,36 +3,27 @@ Single-GPU benchmark for matching problem.
 Edit the CONFIG section below to change parameters.
 """
 
-import csv
+import argparse
+import json
 import time
 
+import config
 import torch
-from generate_synthetic_data import generate_synthetic_matching_input_args
+from benchmark_utils import generate_benchmark_data, get_output_filename, print_config, print_results, save_dual_curve
 
-from dualip.objectives.matching import MatchingInputArgs, MatchingSolverDualObjectiveFunction
+from dualip.objectives.matching import MatchingSolverDualObjectiveFunction
 from dualip.optimizers.agd import AcceleratedGradientDescent
-from dualip.preprocessing.precondition import jacobi_precondition
 
 # =============================================================================
 # CONFIG - Edit these values
 # =============================================================================
 
-# Data parameters (fixed across all runs)
-NUM_SOURCES = 25_000_000
-NUM_DESTINATIONS = 10_000
-TARGET_SPARSITY = 0.001
-SEED = 42
-
-# Solver parameters (fixed across all runs)
-FINAL_GAMMA = 1e-3  # Final gamma value (used directly if no decay, or as target if decay enabled)
-MAX_ITER = 1000
-INITIAL_STEP_SIZE = 1e-3
-MAX_STEP_SIZE = 1e-1
-
 # Ablation toggles
 USE_GPU = True  # False = CPU, True = GPU
-USE_PRECONDITIONING = False  # Jacobi preconditioning
 USE_GAMMA_DECAY = False  # Regularization decay
+
+# Gamma settings
+FINAL_GAMMA = 1e-3  # Final gamma value (used directly if no decay, or as target if decay enabled)
 
 # Gamma decay settings (only used if USE_GAMMA_DECAY=True)
 GAMMA_DECAY_STEPS = 35
@@ -43,24 +34,8 @@ def compute_initial_gamma():
     """Compute initial gamma so that we end at FINAL_GAMMA after all decay steps."""
     if not USE_GAMMA_DECAY:
         return FINAL_GAMMA
-    num_decays = MAX_ITER // GAMMA_DECAY_STEPS
+    num_decays = config.MAX_ITER // GAMMA_DECAY_STEPS
     return FINAL_GAMMA / (GAMMA_DECAY_FACTOR**num_decays)
-
-
-def get_output_filename():
-    """Generate informative filename based on parameters."""
-    parts = [
-        f"s{NUM_SOURCES//1_000_000}M",
-        f"d{NUM_DESTINATIONS//1_000}K",
-        f"sp{TARGET_SPARSITY}",
-        f"g{FINAL_GAMMA}",
-        f"iter{MAX_ITER}",
-    ]
-    if USE_PRECONDITIONING:
-        parts.append("precon")
-    if USE_GAMMA_DECAY:
-        parts.append(f"decay{GAMMA_DECAY_FACTOR}x{GAMMA_DECAY_STEPS}")
-    return "_".join(parts) + ".csv"
 
 
 # =============================================================================
@@ -68,62 +43,56 @@ def get_output_filename():
 # =============================================================================
 
 
-def run_benchmark():
-    device = "cuda:0" if USE_GPU else "cpu"
-    rng = None  # np.random.default_rng(SEED)
+def run_benchmark(cache_dir: str | None = None):
+    device = torch.device("cuda:0" if USE_GPU else "cpu")
     initial_gamma = compute_initial_gamma()
 
-    print("=" * 60)
-    print("CONFIG")
-    print("=" * 60)
-    print(f"  Data: {NUM_SOURCES} sources x {NUM_DESTINATIONS} destinations")
-    print(f"  Sparsity: {TARGET_SPARSITY}")
-    print(f"  Seed: {SEED}")
-    print(f"  Device: {device}")
-    print(f"  Preconditioning: {USE_PRECONDITIONING}")
-    print(f"  Gamma decay: {USE_GAMMA_DECAY}")
-    if USE_GAMMA_DECAY:
-        print(f"  Gamma: {initial_gamma} -> {FINAL_GAMMA}, Max iter: {MAX_ITER}")
-    else:
-        print(f"  Gamma: {FINAL_GAMMA}, Max iter: {MAX_ITER}")
-    print("=" * 60)
+    # Print configuration
+    print_config(
+        num_sources=config.NUM_SOURCES,
+        num_destinations=config.NUM_DESTINATIONS,
+        target_sparsity=config.TARGET_SPARSITY,
+        seed=config.SEED,
+        gamma=FINAL_GAMMA,
+        max_iter=config.MAX_ITER,
+        use_preconditioning=config.USE_PRECONDITIONING,
+        device=device,
+        use_gamma_decay=USE_GAMMA_DECAY,
+        initial_gamma=initial_gamma if USE_GAMMA_DECAY else None,
+        final_gamma=FINAL_GAMMA if USE_GAMMA_DECAY else None,
+    )
 
     # Generate data
     print("\n[1/3] Generating data...")
-    t0 = time.time()
-    input_args: MatchingInputArgs = generate_synthetic_matching_input_args(
-        num_sources=NUM_SOURCES,
-        num_destinations=NUM_DESTINATIONS,
-        target_sparsity=TARGET_SPARSITY,
+    input_args, data_time = generate_benchmark_data(
+        num_sources=config.NUM_SOURCES,
+        num_destinations=config.NUM_DESTINATIONS,
+        target_sparsity=config.TARGET_SPARSITY,
         device=device,
-        rng=rng,
+        dtype=config.DTYPE,
+        seed=config.SEED,
+        use_preconditioning=config.USE_PRECONDITIONING,
+        cache_dir=cache_dir,
     )
-    data_time = time.time() - t0
-    print(f"      {data_time:.3f}s | NNZ: {input_args.A._nnz()}")
-
-    # Preconditioning
-    if USE_PRECONDITIONING:
-        print("      Applying preconditioning...")
-        jacobi_precondition(input_args.A, input_args.b_vec)
 
     # Create objective
     print("[2/3] Creating objective...")
-    t0 = time.time()
+    t0 = time.perf_counter()
     objective = MatchingSolverDualObjectiveFunction(
         matching_input_args=input_args,
         gamma=initial_gamma,
-        batching=USE_GPU,  # batching only helps on GPU
+        batching=config.BATCHING,
     )
-    obj_time = time.time() - t0
+    obj_time = time.perf_counter() - t0
     print(f"      {obj_time:.3f}s")
 
     # Create solver
     print("[3/3] Running solver...")
     solver = AcceleratedGradientDescent(
-        max_iter=MAX_ITER,
+        max_iter=config.MAX_ITER,
         gamma=initial_gamma,
-        initial_step_size=INITIAL_STEP_SIZE,
-        max_step_size=MAX_STEP_SIZE,
+        initial_step_size=config.INITIAL_STEP_SIZE,
+        max_step_size=config.MAX_STEP_SIZE,
         gamma_decay_type="step" if USE_GAMMA_DECAY else None,
         gamma_decay_params=(
             {"decay_steps": GAMMA_DECAY_STEPS, "decay_factor": GAMMA_DECAY_FACTOR} if USE_GAMMA_DECAY else None
@@ -133,35 +102,90 @@ def run_benchmark():
 
     initial_dual = torch.zeros_like(input_args.b_vec)
 
-    t0 = time.time()
+    t0 = time.perf_counter()
     result = solver.maximize(objective, initial_dual)
-    solve_time = time.time() - t0
+    solve_time = time.perf_counter() - t0
 
-    # Results
-    print("\n" + "=" * 60)
-    print("RESULTS")
-    print("=" * 60)
-    print(f"  Solve time: {solve_time:.3f}s ({solve_time/MAX_ITER*1000:.2f} ms/iter)")
-    print(f"  Dual objective: {result.dual_objective:.6f}")
-    print(f"  Primal objective: {result.objective_result.primal_objective.item():.6f}")
-    print(f"  Reg penalty: {result.objective_result.reg_penalty.item():.6f}")
-    max_slack = result.objective_result.max_pos_slack
-    max_slack = max_slack.item() if hasattr(max_slack, "item") else max_slack
-    print(f"  Max positive slack: {max_slack:.6e}")
-    print(f"  Sum positive slack: {result.objective_result.sum_pos_slack.item():.6e}")
-    print("=" * 60)
+    # Print results
+    print_results(result, solve_time, config.MAX_ITER)
 
     # Save dual objective curve to CSV
-    filename = get_output_filename()
-    with open(filename, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["iteration", "dual_objective"])
-        for i, obj in enumerate(result.dual_objective_log, 1):
-            writer.writerow([i, obj])
-    print(f"\nDual objective curve saved to: {filename}")
+    filename = get_output_filename(
+        num_sources=config.NUM_SOURCES,
+        num_destinations=config.NUM_DESTINATIONS,
+        target_sparsity=config.TARGET_SPARSITY,
+        gamma=FINAL_GAMMA,
+        max_iter=config.MAX_ITER,
+        use_preconditioning=config.USE_PRECONDITIONING,
+        gamma_decay_factor=GAMMA_DECAY_FACTOR if USE_GAMMA_DECAY else None,
+        gamma_decay_steps=GAMMA_DECAY_STEPS if USE_GAMMA_DECAY else None,
+    )
+    save_dual_curve(result, filename)
 
-    return result
+    # Return metrics dictionary
+    metrics = {
+        "num_gpus": 1,
+        "num_sources": config.NUM_SOURCES,
+        "num_destinations": config.NUM_DESTINATIONS,
+        "target_sparsity": config.TARGET_SPARSITY,
+        "max_iter": config.MAX_ITER,
+        "solve_time": solve_time,
+        "dual_objective": float(result.dual_objective),
+        "primal_objective": (
+            float(result.objective_result.primal_objective.item())
+            if result.objective_result.primal_objective is not None
+            else None
+        ),
+        "reg_penalty": float(result.objective_result.reg_penalty.item()),
+        "max_pos_slack": float(
+            result.objective_result.max_pos_slack.item()
+            if hasattr(result.objective_result.max_pos_slack, "item")
+            else result.objective_result.max_pos_slack
+        ),
+        "sum_pos_slack": float(result.objective_result.sum_pos_slack.item()),
+    }
+
+    return metrics
 
 
 if __name__ == "__main__":
-    run_benchmark()
+    parser = argparse.ArgumentParser(description="Single-GPU benchmark for matching problem")
+    parser.add_argument(
+        "--cache-dir",
+        type=str,
+        default=None,
+        help="Directory for cached data (default: ./benchmark_data)",
+    )
+    parser.add_argument(
+        "--num-sources",
+        type=int,
+        default=None,
+        help=f"Number of sources (default: {config.NUM_SOURCES})",
+    )
+    parser.add_argument(
+        "--max-iter",
+        type=int,
+        default=None,
+        help=f"Maximum iterations (default: {config.MAX_ITER})",
+    )
+    parser.add_argument(
+        "--json-output",
+        type=str,
+        default=None,
+        help="Save metrics to JSON file",
+    )
+    args = parser.parse_args()
+
+    # Override config if specified
+    if args.num_sources is not None:
+        config.NUM_SOURCES = args.num_sources
+    if args.max_iter is not None:
+        config.MAX_ITER = args.max_iter
+
+    metrics = run_benchmark(cache_dir=args.cache_dir)
+
+    # Save metrics to JSON if requested
+    if args.json_output:
+        with open(args.json_output, "w") as f:
+            json.dump(metrics, f, indent=2)
+        print(f"\n📊 Metrics saved to {args.json_output}")
