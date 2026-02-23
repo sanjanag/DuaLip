@@ -13,10 +13,10 @@ import time
 import config
 import torch
 from benchmark_utils import generate_benchmark_data, get_output_filename, print_config, print_results, save_dual_curve
+from generate_synthetic_data import load_local_partition_from_cache
 
 from dualip.objectives.matching import MatchingInputArgs, MatchingSolverDualObjectiveFunctionDistributed
 from dualip.optimizers.agd import AcceleratedGradientDescent
-from dualip.utils.dist_utils import global_to_local_projection_map, split_tensors_to_devices
 
 # =============================================================================
 # CONFIG - Edit these values
@@ -40,19 +40,28 @@ def run_benchmark(cache_dir: str | None = None):
     device = torch.device(f"cuda:{rank}")
     torch.cuda.set_device(device)
 
-    # Only rank 0 generates and splits data to avoid redundant computation
+    # Per-rank loading does not support preconditioning (it modifies A and
+    # b_vec in-place after generation, which is not reflected in the cache).
+    if config.USE_PRECONDITIONING:
+        raise NotImplementedError(
+            "Per-rank loading from disk cache does not support preconditioning. "
+            "Set config.USE_PRECONDITIONING = False or use the single-GPU benchmark."
+        )
+
+    # Rank 0 ensures the cache exists on disk (generates if missing)
     if rank == 0:
-        print("[2/4] Generating data on rank 0...")
+        print("[2/4] Ensuring cache exists (rank 0)...")
         input_args, data_time = generate_benchmark_data(
             num_sources=config.NUM_SOURCES,
             num_destinations=config.NUM_DESTINATIONS,
             target_sparsity=config.TARGET_SPARSITY,
-            device="cpu",  # Use CPU for data generation
+            device="cpu",
             dtype=config.DTYPE,
             seed=config.SEED,
-            use_preconditioning=config.USE_PRECONDITIONING,
+            use_preconditioning=False,
             cache_dir=cache_dir,
         )
+        del input_args  # free CPU memory before other ranks start loading
 
         print_config(
             num_sources=config.NUM_SOURCES,
@@ -65,40 +74,23 @@ def run_benchmark(cache_dir: str | None = None):
             world_size=world_size,
         )
 
-        print("[3/4] Splitting data on rank 0...")
-        # Split data on CPU ONLY (don't move to GPUs)
-        cpu_devices = ["cpu"] * world_size
-        A_splits, c_splits, split_index_map = split_tensors_to_devices(input_args.A, input_args.c, cpu_devices)
+    # Wait for cache to be fully written before other ranks read it
+    torch.distributed.barrier()
 
-        # Create local input args for each rank (b_vec=None for local partitions)
-        local_input_args_list = []
-        for r in range(world_size):
-            pm_local = global_to_local_projection_map(input_args.projection_map, split_index_map[r])
-            local_input_args_list.append(
-                MatchingInputArgs(
-                    A=A_splits[r],
-                    c=c_splits[r],
-                    projection_map=pm_local,
-                    b_vec=None,
-                    equality_mask=input_args.equality_mask,
-                )
-            )
-        b_vec_cpu = input_args.b_vec
-
-        print("      Scattering partitions to all ranks...")
-    else:
-        local_input_args_list = None
-        b_vec_cpu = None
-
-    # Scatter: each rank receives only its own partition
-    local_input_args_recv = [None]
-    torch.distributed.scatter_object_list(local_input_args_recv, local_input_args_list, src=0)
-    local_input_args_cpu = local_input_args_recv[0]
-
-    # Broadcast b_vec to all ranks (small, shared across all ranks)
-    b_vec_list = [b_vec_cpu]
-    torch.distributed.broadcast_object_list(b_vec_list, src=0)
-    b_vec_cpu = b_vec_list[0]
+    # Each rank loads only its own partition from the memmap cache
+    if rank == 0:
+        print("[3/4] Loading local partitions from cache...")
+    local_input_args_cpu = load_local_partition_from_cache(
+        num_sources=config.NUM_SOURCES,
+        num_destinations=config.NUM_DESTINATIONS,
+        target_sparsity=config.TARGET_SPARSITY,
+        dtype=config.DTYPE,
+        seed=config.SEED,
+        rank=rank,
+        world_size=world_size,
+        cache_dir=cache_dir,
+    )
+    b_vec_cpu = local_input_args_cpu.b_vec
 
     # Move local partition to GPU
     local_input_args = MatchingInputArgs(

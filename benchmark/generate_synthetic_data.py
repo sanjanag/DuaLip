@@ -471,6 +471,131 @@ def generate_synthetic_matching_input_args(
     )
 
 
+def load_local_partition_from_cache(
+    num_sources: int,
+    num_destinations: int,
+    target_sparsity: float,
+    dtype: torch.dtype = torch.float32,
+    seed: int = 42,
+    rank: int = 0,
+    world_size: int = 1,
+    cache_dir: str | None = None,
+) -> MatchingInputArgs:
+    """
+    Load only this rank's column partition directly from the memmap cache.
+
+    Each rank independently opens the shared memmap files read-only and slices
+    out its contiguous block of columns, avoiding the need to load the full
+    dataset into memory and scatter via NCCL.
+
+    The column-split formula matches ``split_tensors_to_devices`` in
+    ``dualip.utils.dist_utils`` exactly:
+
+        base = num_cols // world_size
+        remainder = num_cols % world_size
+        start_col = rank * base + min(rank, remainder)
+        width = base + (1 if rank < remainder else 0)
+
+    Parameters
+    ----------
+    num_sources, num_destinations, target_sparsity, dtype, seed :
+        Must match the parameters used when the cache was created.
+    rank : int
+        This process's rank in the distributed group.
+    world_size : int
+        Total number of ranks.
+    cache_dir : str | None
+        Directory containing the memmap cache files.
+
+    Returns
+    -------
+    MatchingInputArgs
+        Local partition with A, c, projection_map, and b_vec on CPU.
+    """
+    if cache_dir is None:
+        cache_dir = _DEFAULT_CACHE_DIR
+
+    cache_key = _get_cache_key(num_sources, num_destinations, target_sparsity, dtype, seed)
+
+    # --- Load metadata to get array shapes and dtypes -----------------------
+    meta_path = _get_meta_path(cache_key, cache_dir)
+    with open(meta_path, "r") as f:
+        meta = json.load(f)
+
+    shapes = meta["shapes"]
+    dtypes_meta = {k: np.dtype(v) for k, v in meta["array_dtypes"].items()}
+
+    # --- Open memmap files read-only ----------------------------------------
+    ccol_mm = _load_array_from_memmap(
+        _array_path(cache_key, "A_ccol", cache_dir),
+        tuple(shapes["A_ccol"]),
+        dtypes_meta["A_ccol"],
+    )
+    row_mm = _load_array_from_memmap(
+        _array_path(cache_key, "A_row", cache_dir),
+        tuple(shapes["A_row"]),
+        dtypes_meta["A_row"],
+    )
+    a_vals_mm = _load_array_from_memmap(
+        _array_path(cache_key, "A_vals", cache_dir),
+        tuple(shapes["A_vals"]),
+        dtypes_meta["A_vals"],
+    )
+    c_vals_mm = _load_array_from_memmap(
+        _array_path(cache_key, "c_vals", cache_dir),
+        tuple(shapes["c_vals"]),
+        dtypes_meta["c_vals"],
+    )
+    b_vec_mm = _load_array_from_memmap(
+        _array_path(cache_key, "b_vec", cache_dir),
+        tuple(shapes["b_vec"]),
+        dtypes_meta["b_vec"],
+    )
+
+    # --- Compute this rank's column range (matches split_tensors_to_devices) -
+    num_cols = num_sources
+    base = num_cols // world_size
+    remainder = num_cols % world_size
+    start_col = rank * base + min(rank, remainder)
+    width = base + (1 if rank < remainder else 0)
+    end_col = start_col + width  # exclusive
+
+    # --- Slice CSC arrays for this rank's columns (matches split_csc_by_cols) -
+    nnz_start = int(ccol_mm[start_col])
+    nnz_end = int(ccol_mm[end_col])
+
+    sub_ccol = np.array(ccol_mm[start_col : end_col + 1]) - ccol_mm[start_col]
+    sub_row = np.array(row_mm[nnz_start:nnz_end])
+    sub_a_vals = np.array(a_vals_mm[nnz_start:nnz_end])
+    sub_c_vals = np.array(c_vals_mm[nnz_start:nnz_end])
+    sub_b_vec = np.array(b_vec_mm)
+
+    # --- Build torch CSC tensors --------------------------------------------
+    ccol_t = torch.from_numpy(sub_ccol.astype(np.int64))
+    row_t = torch.from_numpy(sub_row.astype(np.int64))
+    A_vals_t = torch.from_numpy(sub_a_vals.astype(np.float32))
+    c_vals_t = -torch.from_numpy(sub_c_vals.astype(np.float32))  # negate for minimization
+    b_vec_t = torch.from_numpy(sub_b_vec.astype(np.float32))
+
+    A_local = torch.sparse_csc_tensor(ccol_t, row_t, A_vals_t, size=(num_destinations, width))
+    c_local = torch.sparse_csc_tensor(ccol_t, row_t, c_vals_t, size=(num_destinations, width))
+
+    # --- Projection map for this contiguous block of columns ----------------
+    projection_map = create_projection_map(
+        proj_type="simplex",
+        proj_params={"z": 1.0},
+        num_indices=width,
+    )
+
+    return MatchingInputArgs(
+        A=A_local,
+        c=c_local,
+        projection_map=projection_map,
+        b_vec=b_vec_t,
+        equality_mask=None,
+    )
+
+
 if __name__ == "__main__":
     args = generate_synthetic_matching_input_args(
         num_sources=10,
