@@ -2,6 +2,7 @@ import math
 from typing import Callable, Optional
 
 import torch
+import torch.distributed as dist
 
 from dualip.objectives.base import BaseObjective
 from dualip.optimizers.agd_utils import calculate_step_size
@@ -117,7 +118,7 @@ class AcceleratedGradientDescent:
             # Ensure optimizer never crashes due to logging/printing
             pass
 
-    def maximize(self, f: BaseObjective, initial_value: torch.Tensor) -> SolverResult:
+    def maximize(self, f: BaseObjective, initial_value: torch.Tensor, rank: int = 0) -> SolverResult:
         """
         Maximizes the dual-primal objective function f.
         f must provide a method:
@@ -125,6 +126,12 @@ class AcceleratedGradientDescent:
               * dual_gradient (torch.Tensor)
               * dual_objective (float)
               * dual_val (torch.Tensor)
+
+        Args:
+            f: The objective function to maximize
+            initial_value: Initial dual variable values
+            rank: Process rank for distributed training (default: 0 for single-GPU)
+
         Returns a tuple: (final solution, final result, dual_obj_log, step_size_log),
         where dual_obj_log is the list of dual objective values recorded at each iteration
         and step_size_log is the list of the dynamic step size.
@@ -144,59 +151,79 @@ class AcceleratedGradientDescent:
 
             gamma_params = {"gamma": self.gamma} if self.gamma is not None else {}
 
+            # ALL ranks participate in calculate (for distributed objectives)
             if i == self.max_iter and self.save_primal:
                 objective_result: ObjectiveResult = f.calculate(
-                    dual_val=x, **gamma_params, save_primal=self.save_primal
+                    dual_val=x, **gamma_params, save_primal=self.save_primal, rank=rank
                 )
             else:
-                objective_result: ObjectiveResult = f.calculate(dual_val=x, **gamma_params)
+                objective_result: ObjectiveResult = f.calculate(dual_val=x, **gamma_params, rank=rank)
 
-            # Invoke decoupled iteration callback (prints by default; can be overridden)
-            self.iteration_callback(i, objective_result)
+            # Only rank 0 performs optimizer updates
+            if rank == 0:
+                # Invoke decoupled iteration callback (prints by default; can be overridden)
+                self.iteration_callback(i, objective_result)
 
-            dual_obj = objective_result.dual_objective.cpu().item()
-            dual_obj_log.append(dual_obj)
+                dual_obj = objective_result.dual_objective.cpu().item()
+                dual_obj_log.append(dual_obj)
 
-            step_size = calculate_step_size(
-                objective_result.dual_gradient,
-                y,
-                grad_history,
-                dual_history,
-                initial_step_size=self.initial_step_size,
-                max_step_size=self.max_step_size,
-            )
+                step_size = calculate_step_size(
+                    objective_result.dual_gradient,
+                    y,
+                    grad_history,
+                    dual_history,
+                    initial_step_size=self.initial_step_size,
+                    max_step_size=self.max_step_size,
+                )
 
-            step_size_log.append(step_size)
-            # Gradient ascent step.
-            y_new = x + objective_result.dual_gradient * step_size
-            y_new = project_on_nn_cone(y_new, equality_mask)
-            # Accelerated update.
-            x = (y_new * (1.0 - self.beta_seq[i - 1])) + (y * self.beta_seq[i - 1])
-            y = y_new
-            if self.gamma is not None and self.gamma_decay_type is not None:
-                self._update_gamma(i, step_size)
+                step_size_log.append(step_size)
+                # Gradient ascent step.
+                y_new = x + objective_result.dual_gradient * step_size
+                y_new = project_on_nn_cone(y_new, equality_mask)
+                # Accelerated update.
+                x = (y_new * (1.0 - self.beta_seq[i - 1])) + (y * self.beta_seq[i - 1])
+                y = y_new
+                if self.gamma is not None and self.gamma_decay_type is not None:
+                    self._update_gamma(i, step_size)
 
-            # Log iteration metrics (will check MLflow state internally)
-            iteration_metrics = {
-                "step_size": step_size,
-                "dual_objective": dual_obj,
-            }
+                # Log iteration metrics (will check MLflow state internally)
+                iteration_metrics = {
+                    "step_size": step_size,
+                    "dual_objective": dual_obj,
+                }
 
-            if self.gamma is not None:
-                iteration_metrics["gamma"] = self.gamma
+                if self.gamma is not None:
+                    iteration_metrics["gamma"] = self.gamma
 
-            log_metrics(iteration_metrics, step=i)
+                log_metrics(iteration_metrics, step=i)
 
-            # Log objective result details
-            log_objective_result(objective_result, step=i)
+                # Log objective result details
+                log_objective_result(objective_result, step=i)
+
+            # Broadcast updated x and y from rank 0 to all other ranks
+            if dist.is_initialized():
+                dist.broadcast(x, src=0)
+                dist.broadcast(y, src=0)
 
             i += 1
 
-        solver_result = SolverResult(
-            dual_val=y,
-            dual_objective=dual_obj,
-            objective_result=objective_result,
-            dual_objective_log=dual_obj_log,
-            step_size_log=step_size_log,
-        )
+        # Only rank 0 returns meaningful result
+        if rank == 0:
+            solver_result = SolverResult(
+                dual_val=y,
+                dual_objective=dual_obj,
+                objective_result=objective_result,
+                dual_objective_log=dual_obj_log,
+                step_size_log=step_size_log,
+            )
+        else:
+            # Non-zero ranks return a minimal result
+            solver_result = SolverResult(
+                dual_val=y,
+                dual_objective=0.0,
+                objective_result=objective_result,
+                dual_objective_log=[],
+                step_size_log=[],
+            )
+
         return solver_result

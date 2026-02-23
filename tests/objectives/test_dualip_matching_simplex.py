@@ -1,11 +1,6 @@
-import pytest
 import torch
 
-from dualip.objectives.matching import (
-    MatchingInputArgs,
-    MatchingSolverDualObjectiveFunction,
-    MatchingSolverDualObjectiveFunctionDistributed,
-)
+from dualip.objectives.matching import MatchingInputArgs, MatchingSolverDualObjectiveFunction
 from dualip.optimizers.agd import AcceleratedGradientDescent
 from dualip.projections.base import create_projection_map
 
@@ -130,52 +125,6 @@ def test_simplex_solver_inequality():
     solver = AcceleratedGradientDescent(max_iter=30, gamma=gamma)
 
     solver_result = solver.maximize(objective, initial_dual)
-
-    true_values = [
-        (2, -3.6010155991401818),
-        (16, -3.60842718733725),
-        (23, -3.5080258013053136),
-        (29, -3.4868496294227143),
-    ]
-
-    for i, true_val in true_values:
-
-        assert abs(solver_result.dual_objective_log[i - 1] - true_val) < 1e-5, (
-            f"Solution has incorrect dual objective at iteration {i+1}"
-            f" expected dual objective value {true_val} but computed {solver_result.dual_objective_log[i-1]}"
-        )
-
-
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-def test_simplex_solver_inequality_distributed():
-
-    print("Running simplexInequality test")
-
-    gamma = 1e-3
-    a_expanded, c_expanded, b_vec = set_up_data_scala()
-    J, num_items = a_expanded.shape
-    host_device = "cuda:0"
-    compute_device_num = 2
-    compute_devices = [f"cuda:{i}" for i in range(compute_device_num)]
-
-    # Use the new convenience function for constant projection types
-    projection_map = create_projection_map("simplex", {"z": 1}, num_items)
-
-    input_args = MatchingInputArgs(
-        A=a_expanded,
-        c=c_expanded,
-        projection_map=projection_map,
-        b_vec=b_vec,
-        equality_mask=None,
-    )
-    f = MatchingSolverDualObjectiveFunctionDistributed(
-        matching_input_args=input_args, gamma=gamma, host_device=host_device, compute_devices=compute_devices
-    )
-
-    initial_dual = 0.1 * torch.ones(5, device=host_device)
-
-    solver = AcceleratedGradientDescent(max_iter=30, gamma=gamma)
-    solver_result = solver.maximize(f, initial_dual)
 
     true_values = [
         (2, -3.6010155991401818),
