@@ -100,7 +100,7 @@ Full documentation is available at **[linkedin.github.io/DuaLip](https://linkedi
 
 This PyTorch-based solver is a ground-up rewrite of the original [Spark/Scala DuaLip solver](https://arxiv.org/abs/2103.05277). The core dual-decomposition algorithm is the same, but the implementation, data formats, and APIs are entirely new.
 
-**Version history:** Tags `v1.0.0` through `v4.0.5` correspond to the Spark/Scala solver. The PyTorch rewrite begins after `v4.0.5` on the `master` branch.
+**Version history:** Tags `v1.0.0` through `v4.0.5` correspond to the Spark/Scala solver. The PyTorch rewrite begins at `v5.0.1` on the `master` branch.
 
 See the [Quick start](#quick-start) section and [examples/movielens_matching/movies_lens_matching.py](examples/movielens_matching/movies_lens_matching.py) for examples of the new API.
 
