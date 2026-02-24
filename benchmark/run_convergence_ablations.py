@@ -30,6 +30,7 @@ def run_single(
     use_gamma_decay: bool,
     gamma_decay_factor: float | None = None,
     gamma_decay_steps: int | None = None,
+    gamma_decay_min: float | None = None,
     cache_dir: str | None = None,
     output_dir: str = ".",
 ):
@@ -71,7 +72,11 @@ def run_single(
         max_step_size=config.MAX_STEP_SIZE,
         gamma_decay_type="step" if use_gamma_decay else None,
         gamma_decay_params=(
-            {"decay_steps": gamma_decay_steps, "decay_factor": gamma_decay_factor}
+            {
+                "decay_steps": gamma_decay_steps,
+                "decay_factor": gamma_decay_factor,
+                **({"min_gamma": gamma_decay_min} if gamma_decay_min is not None else {}),
+            }
             if use_gamma_decay
             else None
         ),
@@ -126,7 +131,7 @@ def run_decay_ablation(cache_dir: str | None = None, output_dir: str = "."):
         cache_dir=cache_dir,
         output_dir=output_dir,
     )
-    # With decay: start at γ=0.16, halve every 25 iterations
+    # With decay: start at γ=0.16, halve every 25 iterations, floor at 0.01
     run_single(
         label="gamma_decay_dual_objective",
         gamma=0.16,
@@ -134,6 +139,7 @@ def run_decay_ablation(cache_dir: str | None = None, output_dir: str = "."):
         use_gamma_decay=True,
         gamma_decay_factor=0.5,
         gamma_decay_steps=25,
+        gamma_decay_min=0.01,
         cache_dir=cache_dir,
         output_dir=output_dir,
     )

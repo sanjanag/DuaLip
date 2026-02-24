@@ -103,7 +103,11 @@ class AcceleratedGradientDescent:
         if self.gamma_decay_type == "step":
             if itr % self.gamma_decay_params["decay_steps"] == 0:
                 decay_factor = self.gamma_decay_params["decay_factor"]
-                self.gamma = self.gamma * decay_factor
+                new_gamma = self.gamma * decay_factor
+                min_gamma = self.gamma_decay_params.get("min_gamma")
+                if min_gamma is not None and new_gamma < min_gamma:
+                    return
+                self.gamma = new_gamma
                 self.max_step_size = step_size * decay_factor
         else:
             raise ValueError(f"Unsupported gamma decay type: {self.gamma_decay_type}")
