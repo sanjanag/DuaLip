@@ -56,11 +56,11 @@ from dualip.projections.base import create_projection_map
 from dualip.run_solver import run_solver
 from dualip.types import ComputeArgs, ObjectiveArgs, SolverArgs
 
-# Build your problem data (A in CSC format, cost vector c, budget vector b)
+# Build your problem data (A and c in CSC format, budget vector b)
 # and a projection map defining per-column constraints
 input_args = MatchingInputArgs(
     A=A_csc,                            # sparse constraint matrix (CSC)
-    c=c_vec,                            # cost vector
+    c=c_vec,                            # sparse cost vector (CSC)
     b_vec=b_vec,                        # budget / RHS vector
     projection_map=create_projection_map(projection_entries),
 )
