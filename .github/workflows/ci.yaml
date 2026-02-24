@@ -1,26 +1,12 @@
-name: CI (dualip-pytorch)
+name: CI
 
 on:
   push:
-    branches: [dualip-pytorch]
-    paths:
-      - "src/**"
-      - "test/**"
-      - "examples/**"
-      - "pyproject.toml"
-      - ".pre-commit-config.yaml"
-      - "Makefile"
+    branches: [master]
   pull_request:
-    branches: [dualip-pytorch]
-    paths:
-      - "src/**"
-      - "test/**"
-      - "examples/**"
-      - "pyproject.toml"
-      - ".pre-commit-config.yaml"
-      - "Makefile"
-  # no schedule; manual trigger optional:
-  # workflow_dispatch:
+    branches: [master]
+  workflow_call:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -44,11 +30,14 @@ jobs:
 
   tests:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: ${{ matrix.python-version }}
           cache: "pip"
       - run: python -m pip install --upgrade pip
       - run: pip install -e ".[dev]"
