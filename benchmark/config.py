@@ -13,7 +13,7 @@ SEED = 42
 DTYPE = torch.float32
 
 # Solver parameters (fixed across all runs)
-MAX_ITER = 1000
+MAX_ITER = 10_000
 INITIAL_STEP_SIZE = 1e-3
 MAX_STEP_SIZE = 1e-1
 
