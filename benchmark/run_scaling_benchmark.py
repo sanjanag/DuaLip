@@ -158,11 +158,49 @@ def run_distributed_benchmark(num_sources: int, num_gpus: int, cache_dir: str | 
         Path(json_file).unlink(missing_ok=True)
 
 
+def load_existing_results(output_file: str) -> list[dict]:
+    """Load existing results from CSV file for resume support."""
+    results = []
+    path = Path(output_file)
+    if not path.exists():
+        return results
+
+    with open(path, "r", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            # Convert numeric fields back from strings
+            for key in row:
+                if row[key] == "":
+                    row[key] = None
+                else:
+                    try:
+                        row[key] = int(row[key])
+                    except ValueError:
+                        try:
+                            row[key] = float(row[key])
+                        except ValueError:
+                            pass
+            results.append(dict(row))
+
+    return results
+
+
 def run_all_benchmarks(cache_dir: str | None = None, output_file: str = "scaling_results.csv"):
     """
     Run all benchmark combinations and save results to CSV.
+
+    Automatically resumes from existing results: any (num_sources, num_gpus)
+    combination already present in the output CSV will be skipped.
     """
-    results = []
+    # Load existing results for resume support
+    results = load_existing_results(output_file)
+    completed = {(r["num_sources"], r["num_gpus"]) for r in results}
+
+    if completed:
+        print(f"\nResuming: found {len(completed)} existing result(s) in {output_file}")
+
+    total = len(SOURCE_SIZES) * len(GPU_COUNTS)
+    remaining = total - len(completed)
 
     print(f"\n{'#'*80}")
     print("# SCALING BENCHMARK")
@@ -170,10 +208,15 @@ def run_all_benchmarks(cache_dir: str | None = None, output_file: str = "scaling
     print(f"# GPU counts: {GPU_COUNTS}")
     print(f"# Max iterations: {MAX_ITER:,}")
     print(f"# Output: {output_file}")
+    print(f"# Configurations: {remaining} remaining / {total} total")
     print(f"{'#'*80}\n")
 
     for num_sources in SOURCE_SIZES:
         for num_gpus in GPU_COUNTS:
+            if (num_sources, num_gpus) in completed:
+                print(f"\n⏭ Skipping (already complete): {num_sources:,} sources, {num_gpus} GPU(s)")
+                continue
+
             try:
                 if num_gpus == 1:
                     result = run_single_gpu_benchmark(num_sources, cache_dir)
