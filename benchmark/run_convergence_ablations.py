@@ -31,6 +31,7 @@ def run_single(
     gamma_decay_factor: float | None = None,
     gamma_decay_steps: int | None = None,
     gamma_decay_min: float | None = None,
+    max_iter: int | None = None,
     cache_dir: str | None = None,
     output_dir: str = ".",
 ):
@@ -66,7 +67,7 @@ def run_single(
 
     # Create solver
     solver = AcceleratedGradientDescent(
-        max_iter=config.MAX_ITER,
+        max_iter=max_iter if max_iter is not None else config.MAX_ITER,
         gamma=gamma,
         initial_step_size=config.INITIAL_STEP_SIZE,
         max_step_size=config.MAX_STEP_SIZE,
@@ -122,12 +123,15 @@ def run_precon_ablation(cache_dir: str | None = None, output_dir: str = "."):
 
 def run_decay_ablation(cache_dir: str | None = None, output_dir: str = "."):
     """Run gamma decay ablation (Figure 2)."""
+    max_iter = 100
+
     # No decay baseline: constant γ=1e-2
     run_single(
         label="no_gamma_decay_dual_objective",
         gamma=1e-2,
         use_preconditioning=False,
         use_gamma_decay=False,
+        max_iter=max_iter,
         cache_dir=cache_dir,
         output_dir=output_dir,
     )
@@ -140,6 +144,7 @@ def run_decay_ablation(cache_dir: str | None = None, output_dir: str = "."):
         gamma_decay_factor=0.5,
         gamma_decay_steps=25,
         gamma_decay_min=0.01,
+        max_iter=max_iter,
         cache_dir=cache_dir,
         output_dir=output_dir,
     )
