@@ -60,7 +60,7 @@ from dualip.types import ComputeArgs, ObjectiveArgs, SolverArgs
 # and a projection map defining per-column constraints
 input_args = MatchingInputArgs(
     A=A_csc,                            # sparse constraint matrix (CSC)
-    c=c_vec,                            # sparse cost vector (CSC)
+    c=C_csc,                            # sparse cost matrix (CSC)
     b_vec=b_vec,                        # budget / RHS vector
     projection_map=create_projection_map(projection_entries),
 )
